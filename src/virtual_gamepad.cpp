@@ -1,3 +1,6 @@
+#include <cfloat>
+#include <chrono>
+#include <cstdio>
 #include "virtual_gamepad.h"
 
 #include <algorithm>
@@ -373,6 +376,29 @@ void VirtualGamepadOverlay::OnDraw(ImGuiIO& io) {
     return ImVec2(w * x, h * y);
   };
 
+  {
+    using clk = std::chrono::steady_clock;
+    static auto fps_t0 = clk::now();
+    static int fps_frames = 0;
+    static float fps_value = 0.0f;
+    ++fps_frames;
+    const float fps_secs = std::chrono::duration<float>(clk::now() - fps_t0).count();
+    if (fps_secs >= 0.5f) {
+      fps_value = fps_frames / fps_secs;
+      fps_frames = 0;
+      fps_t0 = clk::now();
+    }
+    char fps_text[40];
+    std::snprintf(fps_text, sizeof(fps_text), "%.0f FPS  %.1f ms", fps_value,
+                  fps_value > 0.0f ? 1000.0f / fps_value : 0.0f);
+    const float fps_size = h * 0.035f;
+    const ImVec2 fps_sz = ImGui::GetFont()->CalcTextSizeA(fps_size, FLT_MAX, 0.0f, fps_text);
+    const ImVec2 fps_pos(w * 0.5f - fps_sz.x * 0.5f, h * 0.012f);
+    draw->AddRectFilled(ImVec2(fps_pos.x - 8.0f, fps_pos.y - 3.0f),
+                        ImVec2(fps_pos.x + fps_sz.x + 8.0f, fps_pos.y + fps_sz.y + 3.0f),
+                        IM_COL32(0, 0, 0, 150), 6.0f);
+    draw->AddText(ImGui::GetFont(), fps_size, fps_pos, IM_COL32(120, 255, 160, 255), fps_text);
+  }
   const ImU32 button_color = IM_COL32(43, 57, 78, 235);
   const ImU32 utility_color = IM_COL32(37, 48, 65, 225);
 
