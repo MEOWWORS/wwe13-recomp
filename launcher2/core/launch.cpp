@@ -329,6 +329,11 @@ bool ProcessorSupportsGameBuild() {
 
 Result StartGame(const LaunchPlan& plan, double watch_seconds, std::atomic<bool>* process_started) {
   if (process_started) process_started->store(false, std::memory_order_relaxed);
+#ifdef __ANDROID__
+  (void)plan;
+  (void)watch_seconds;
+  return Result::Fail("Android game launch is handled by the in-process runtime.");
+#else
   try {
     std::error_code error;
     fs::path user_data_root;
@@ -453,6 +458,7 @@ Result StartGame(const LaunchPlan& plan, double watch_seconds, std::atomic<bool>
   } catch (...) {
     return Result::Fail("WWE '13 could not be started. Check the game folder and try again.");
   }
+#endif
 }
 
 }  // namespace wwe13::launcher

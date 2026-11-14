@@ -3,7 +3,7 @@
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-#elif defined(__linux__)
+#elif defined(__linux__) && !defined(__ANDROID__)
 #include <X11/Xlib.h>
 #include <X11/keysym.h>
 #endif
@@ -14,7 +14,7 @@ bool ShiftDownAtLaunch(SDL_Window* window) {
   if ((SDL_GetModState() & SDL_KMOD_SHIFT) != 0) return true;
 #ifdef _WIN32
   return (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
-#elif defined(__linux__)
+#elif defined(__linux__) && !defined(__ANDROID__)
   if (!window) return false;
   const SDL_PropertiesID properties = SDL_GetWindowProperties(window);
   Display* display = static_cast<Display*>(

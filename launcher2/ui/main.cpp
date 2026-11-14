@@ -300,6 +300,15 @@ bool ResolutionHidden(Resolution resolution) {
 fs::path LauncherExecutablePath() {
   // Ask the OS for the real path: the packaged Windows launcher is "WWE13 Launcher.exe" while the build
   // target and the Linux binary are "wwe13-launcher". Guessing the name broke relaunching after an update.
+#ifdef __ANDROID__
+  // Android: /proc/self/exe is the system process. Use the app storage folder, the same one the
+  // ReXGlue Android entry uses as its base folder.
+  {
+    const char* storage = SDL_GetAndroidExternalStoragePath();
+    if (!storage) storage = SDL_GetAndroidInternalStoragePath();
+    if (storage) return Utf8Path(storage) / "launcher";
+  }
+#endif
 #ifdef _WIN32
   wchar_t buffer[4096];
   const DWORD length = GetModuleFileNameW(nullptr, buffer, static_cast<DWORD>(std::size(buffer)));
@@ -629,6 +638,17 @@ void StartRefreshGameFiles(AppState& app) {
 
 void StartLaunch(AppState& app);
 
+#ifdef __ANDROID__
+// Android: the game runs in this process. Play stores its launch plan here and ends the launcher loop;
+// the entry point then starts the game with these arguments and environment.
+struct AndroidGameRequest {
+  bool requested = false;
+  std::vector<std::string> arguments;
+  std::vector<std::pair<std::string, std::string>> environment;
+};
+AndroidGameRequest g_android_game_request;
+#endif
+
 void LaunchNow(AppState& app) {
   if (app.gpus.empty()) {
     SetBanner(app, kNoVulkanMessage);
@@ -646,11 +666,33 @@ void LaunchNow(AppState& app) {
   BeginJob(app, "Starting WWE '13…", [&app, paths, settings, gpus](const ProgressFn&, CancelFlag&) {
     const LaunchPlan plan = BuildLaunchPlan(paths, settings, gpus);
     // Watch early startup failures long enough to cover a slow graphics-driver/game startup.
+#ifdef __ANDROID__
+    LaunchPlan android_plan = plan;
+    for (const std::string& argument : android_plan.arguments) {
+      // StartGame prepares these folders on desktop; the in-process game needs them too.
+      std::error_code folder_error;
+      if (argument.rfind("--log_file=", 0) == 0) {
+        fs::create_directories(Utf8Path(argument.substr(11)).parent_path(), folder_error);
+      } else if (argument.rfind("--user_data_root=", 0) == 0) {
+        fs::create_directories(Utf8Path(argument.substr(17)), folder_error);
+      }
+    }
+    for (std::string& argument : android_plan.arguments) {
+      if (argument == "--mnk_mode=true") argument = "--mnk_mode=false";  // virtual gamepad, no keyboard
+    }
+    return JobOutcome{Result::Ok(), [&app, android_plan = std::move(android_plan)]() mutable {
+                        g_android_game_request.arguments = std::move(android_plan.arguments);
+                        g_android_game_request.environment = std::move(android_plan.environment);
+                        g_android_game_request.requested = true;
+                        app.running = false;
+                      }};
+#else
     const Result result = StartGame(plan, 90.0, &app.launch_process_started);
     return JobOutcome{result, [&app] {
                         SDL_MinimizeWindow(app.window);
                         app.running = false;
                       }};
+#endif
   });
 }
 
@@ -4014,7 +4056,11 @@ bool Initialize(AppState& app, int argc, char** argv) {
       return false;
     }
   }
+  #ifdef __ANDROID__
+  if (!SDL_InitSubSystem(SDL_INIT_GAMEPAD)) {
+#else
   if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
+#endif
     ShowStartupFailure(std::string("WWE '13 Recomp could not open its window on this PC.\n\n"
                        "This usually means the graphics driver is missing or too old. ") +
                        kNoVulkanMessage);
@@ -4166,38 +4212,19 @@ void Shutdown(AppState& app) {
   if (ImGui::GetCurrentContext()) ImGui::DestroyContext();
   if (app.renderer) SDL_DestroyRenderer(app.renderer);
   if (app.window) SDL_DestroyWindow(app.window);
+#ifdef __ANDROID__
+  // Embedded in the ReXGlue Android host: release only this launcher's SDL references.
+  #ifdef __ANDROID__
+  SDL_QuitSubSystem(SDL_INIT_GAMEPAD);
+#else
   SDL_Quit();
+#endif
+#else
+  SDL_Quit();
+#endif
 }
 
-}  // namespace
-
-int main(int argc, char** argv) {
-  AppState app;
-  if (!Initialize(app, argc, argv)) {
-    Shutdown(app);
-    return 1;
-  }
-  // Vsync paces active frames. After a few frames without input (and with nothing running),
-  // block until the next event instead of polling, so the UI reacts immediately but idles cheaply.
-  {
-    // Initialize() already opened logs/launcher.log before the window existed (GitHub #8); never
-    // reopen it here or the startup lines would be erased.
-    OpenLauncherLog();
-    int vsync = 0;
-    SDL_GetRenderVSync(app.renderer, &vsync);
-    int width = 0;
-    int height = 0;
-    int logical_width = 0;
-    int logical_height = 0;
-    SDL_GetWindowSizeInPixels(app.window, &width, &height);
-    SDL_GetWindowSize(app.window, &logical_width, &logical_height);
-    const SDL_DisplayMode* mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(app.window));
-    PerfLog("renderer=%s vsync=%d window_pixels=%dx%d window_coords=%dx%d pixel_density=%.2f "
-            "display_scale=%.2f ui_scale=%.2f refresh=%.1f Hz video_driver=%s",
-            SDL_GetRendererName(app.renderer), vsync, width, height, logical_width, logical_height,
-            GetWindowPixelDensity(app), SDL_GetWindowDisplayScale(app.window), app.display_scale,
-            mode ? mode->refresh_rate : 0.0f, SDL_GetCurrentVideoDriver());
-  }
+void RunLauncherLoop(AppState& app) {
   int quiet_frames = 0;
   // WWE13_LAUNCHER_FRAME_LOG=1: report every frame that takes > 20 ms, split into its stages, so a
   // "clicking is slow" report names the stage instead of guessing.
@@ -4280,7 +4307,61 @@ int main(int argc, char** argv) {
     }
     (void)frame_start;
   }
+}
+
+}  // namespace
+
+#ifndef __ANDROID__
+int main(int argc, char** argv) {
+  AppState app;
+  if (!Initialize(app, argc, argv)) {
+    Shutdown(app);
+    return 1;
+  }
+  // Vsync paces active frames. After a few frames without input (and with nothing running),
+  // block until the next event instead of polling, so the UI reacts immediately but idles cheaply.
+  {
+    // Initialize() already opened logs/launcher.log before the window existed (GitHub #8); never
+    // reopen it here or the startup lines would be erased.
+    OpenLauncherLog();
+    int vsync = 0;
+    SDL_GetRenderVSync(app.renderer, &vsync);
+    int width = 0;
+    int height = 0;
+    int logical_width = 0;
+    int logical_height = 0;
+    SDL_GetWindowSizeInPixels(app.window, &width, &height);
+    SDL_GetWindowSize(app.window, &logical_width, &logical_height);
+    const SDL_DisplayMode* mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(app.window));
+    PerfLog("renderer=%s vsync=%d window_pixels=%dx%d window_coords=%dx%d pixel_density=%.2f "
+            "display_scale=%.2f ui_scale=%.2f refresh=%.1f Hz video_driver=%s",
+            SDL_GetRendererName(app.renderer), vsync, width, height, logical_width, logical_height,
+            GetWindowPixelDensity(app), SDL_GetWindowDisplayScale(app.window), app.display_scale,
+            mode ? mode->refresh_rate : 0.0f, SDL_GetCurrentVideoDriver());
+  }
+  RunLauncherLoop(app);
   Shutdown(app);
   if (g_perf_log) std::fclose(g_perf_log);
   return 0;
 }
+#endif  // !__ANDROID__
+
+#ifdef __ANDROID__
+// Called by the ReXGlue Android entry after SDL is initialized. Runs the launcher inside the host's
+// SDL session and returns true when the player pressed Play (arguments/environment filled in).
+bool WWE13RunAndroidLauncher(std::vector<std::string>& arguments,
+                             std::vector<std::pair<std::string, std::string>>& environment) {
+  AppState app;
+  if (!Initialize(app, 0, nullptr)) {
+    Shutdown(app);
+    return false;
+  }
+  OpenLauncherLog();
+  RunLauncherLoop(app);
+  Shutdown(app);
+  if (!g_android_game_request.requested) return false;
+  arguments = std::move(g_android_game_request.arguments);
+  environment = std::move(g_android_game_request.environment);
+  return true;
+}
+#endif

@@ -23,6 +23,9 @@
 #include <rex/diagnostics/freeze_logger.h>
 #include <rex/logging.h>
 #include <rex/rex_app.h>
+#if defined(__ANDROID__)
+#include <rex/input/input_system.h>
+#endif
 #include <rex/ui/keybinds.h>
 #include <spdlog/sinks/base_sink.h>
 
@@ -34,6 +37,9 @@
 #include "scene_aa.h"
 #include "scene_resolution.h"
 #include "shader_cache_seed.h"
+#if defined(__ANDROID__)
+#include "virtual_gamepad.h"
+#endif
 
 namespace wwe13 {
 void InitializeEdramTilesForSceneResolution();
@@ -65,7 +71,20 @@ class Wwe13App : public rex::ReXApp {
   }
 
   void OnPreSetup(rex::RuntimeConfig& config) override {
-    (void)config;
+#if defined(__ANDROID__)
+    auto default_input_factory = config.input_factory;
+    auto gamepad_state = virtual_gamepad_state_;
+    config.input_factory = [default_input_factory, gamepad_state](bool tool_mode) {
+      auto input = default_input_factory(tool_mode);
+      if (input && !tool_mode) {
+        if (auto* typed = dynamic_cast<rex::input::InputSystem*>(input.get())) {
+          typed->AddDriver(
+              std::make_unique<wwe13::VirtualGamepadInputDriver>(gamepad_state));
+        }
+      }
+      return input;
+    };
+#endif
     // GitHub #6: a second start-up against the same user-data folder becomes a second game
     // process fighting over the GPU (players hit this by clicking Play again while the first,
     // slow shader-preparation start-up still looks frozen). Acquire the per-user-data lock
@@ -157,10 +176,35 @@ class Wwe13App : public rex::ReXApp {
   }
 
   void OnCreateDialogs(rex::ui::ImGuiDrawer* drawer) override {
+#if defined(__ANDROID__)
+    virtual_gamepad_overlay_ =
+        std::make_unique<wwe13::VirtualGamepadOverlay>(drawer, virtual_gamepad_state_);
+#endif
     if (REXCVAR_GET(debug_ui) && EnvIsOne("WWE13_PERF_OVERLAY")) {
       perf_overlay_ = std::make_unique<Wwe13PerfOverlay>(drawer, frame_history_);
     }
   }
+
+#if defined(__ANDROID__)
+  void OnPostLaunchModule(rex::system::XThread* thread) override {
+    (void)thread;
+    virtual_gamepad_state_->gameplay_active.store(true);
+  }
+
+  void OnGuestThreadExit(rex::system::XThread* thread) override {
+    (void)thread;
+    virtual_gamepad_state_->gameplay_active.store(false);
+    std::lock_guard lock(virtual_gamepad_state_->mutex);
+    virtual_gamepad_state_->touches.clear();
+    virtual_gamepad_state_->buttons = 0;
+    virtual_gamepad_state_->left_trigger = 0;
+    virtual_gamepad_state_->right_trigger = 0;
+    virtual_gamepad_state_->left_x = 0;
+    virtual_gamepad_state_->left_y = 0;
+    virtual_gamepad_state_->right_x = 0;
+    virtual_gamepad_state_->right_y = 0;
+  }
+#endif
 
   void OnPreLaunchModule() override {
     // Owner 2026-10-02: the mouse pointer hides after 4 s without mouse movement (shown again when the mouse moves
@@ -230,6 +274,21 @@ class Wwe13App : public rex::ReXApp {
   }
 
   void OnShutdown() override {
+#if defined(__ANDROID__)
+    virtual_gamepad_state_->gameplay_active.store(false);
+    {
+      std::lock_guard lock(virtual_gamepad_state_->mutex);
+      virtual_gamepad_state_->touches.clear();
+      virtual_gamepad_state_->buttons = 0;
+      virtual_gamepad_state_->left_trigger = 0;
+      virtual_gamepad_state_->right_trigger = 0;
+      virtual_gamepad_state_->left_x = 0;
+      virtual_gamepad_state_->left_y = 0;
+      virtual_gamepad_state_->right_x = 0;
+      virtual_gamepad_state_->right_y = 0;
+    }
+    virtual_gamepad_overlay_.reset();
+#endif
 #ifdef _WIN32
     SetThreadExecutionState(ES_CONTINUOUS);
 #endif
@@ -283,6 +342,11 @@ class Wwe13App : public rex::ReXApp {
   std::shared_ptr<FrameTimeSink> frame_time_sink_;
   std::shared_ptr<Wwe13FrameHistory> frame_history_;
   std::unique_ptr<Wwe13PerfOverlay> perf_overlay_;
+#if defined(__ANDROID__)
+  std::shared_ptr<wwe13::VirtualGamepadState> virtual_gamepad_state_ =
+      std::make_shared<wwe13::VirtualGamepadState>();
+  std::unique_ptr<wwe13::VirtualGamepadOverlay> virtual_gamepad_overlay_;
+#endif
   std::filesystem::path game_data_root_;
   std::filesystem::path user_data_root_;
   wwe13::GameFileCheckResult game_file_check_result_ =
