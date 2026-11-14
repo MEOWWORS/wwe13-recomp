@@ -59,7 +59,7 @@ file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
 configure_file(src/wwe13_build_info.h.in
   "${CMAKE_CURRENT_BINARY_DIR}/generated/wwe13_build_info.h" @ONLY)
 
-add_executable(wwe13
+set(WWE13_SOURCES
   src/main.cpp
   src/game_version_check.cpp
   src/release_diagnostics.cpp
@@ -77,8 +77,18 @@ add_executable(wwe13
   src/scene_aa.cpp
   src/xmp_audio_probe.cpp
   src/shader_cache_seed.cpp)
-target_include_directories(wwe13 PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
-rexglue_setup_target(wwe13)
+
+if(ANDROID)
+  add_library(main SHARED ${WWE13_SOURCES})
+  target_compile_definitions(main PRIVATE REX_ANDROID_APP_ID="wwe13")
+  set(WWE13_TARGET main)
+else()
+  add_executable(wwe13 ${WWE13_SOURCES})
+  set(WWE13_TARGET wwe13)
+endif()
+
+target_include_directories(${WWE13_TARGET} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+rexglue_setup_target(${WWE13_TARGET})
 if(WIN32)
   target_link_libraries(wwe13 PRIVATE advapi32)
   # Link map next to the exe: symbol -> object resolution for Windows-only link checks.

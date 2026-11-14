@@ -3,7 +3,7 @@
 
 #include "thread_profiler.h"
 
-#if defined(__linux__)
+#if defined(__linux__) && !defined(__ANDROID__)
 #include <execinfo.h>
 #include <signal.h>
 #include <sys/syscall.h>

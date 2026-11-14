@@ -14,7 +14,7 @@
 
 #include <rex/ppc/context.h>
 
-#if defined(__linux__)
+#if defined(__linux__) && !defined(__ANDROID__)
 #include <sys/prctl.h>
 #include <unistd.h>
 

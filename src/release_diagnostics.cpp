@@ -684,6 +684,7 @@ void WriteCrashDetailsSignalSafe(void* signal_context) {
     length = AppendLiteral(block, length, capacity, "\n");
   }
 #endif
+#if !defined(__ANDROID__)
   void* frames[48];
   const int frame_count = backtrace(frames, 48);
   length = AppendLiteral(block, length, capacity, "backtrace (exe offsets for addr2line):\n");
@@ -700,6 +701,9 @@ void WriteCrashDetailsSignalSafe(void* signal_context) {
     }
     length = AppendLiteral(block, length, capacity, "\n");
   }
+#else
+  length = AppendLiteral(block, length, capacity, "backtrace unavailable on Android; executable mappings follow\n");
+#endif
   length = AppendLiteral(block, length, capacity, "executable mappings:\n");
   WriteAllSignalSafe(block, length);
 
@@ -865,8 +869,10 @@ void InstallPlatformCrashHandler(const std::string& log_path) {
   }
   g_dump_guest_ctx = std::getenv("WWE13_CRASH_GUEST_CTX") != nullptr;
   // Load and initialise the unwinder now; the first backtrace() call may allocate.
+#if !defined(__ANDROID__)
   void* prime_frames[2];
   backtrace(prime_frames, 2);
+#endif
   g_crash_log_fd = open(log_path.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
   if (g_crash_log_fd < 0) {
     REXLOG_WARN("[wwe13-crash] could not open configured log for direct crash notes");

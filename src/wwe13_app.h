@@ -15,7 +15,7 @@
 #include <string_view>
 #include <utility>
 
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__ANDROID__)
 #include <gtk/gtk.h>
 #endif
 
@@ -178,6 +178,9 @@ class Wwe13App : public rex::ReXApp {
                 L"The selected files are not a supported WWE '13 title update 2.0.1.0 set.\n\n"
                 L"Use your own matching default.xex and default.xexp files from the same game folder.",
                 L"WWE '13", MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
+#elif defined(__ANDROID__)
+    // Android has no GTK dialog; retain the diagnostic in the app log.
+    wwe13::ShowUnsupportedGameFilesMessage(game_file_check_result_);
 #else
     wwe13::ShowUnsupportedGameFilesMessage(game_file_check_result_);
     if (gtk_init_check(nullptr, nullptr)) {

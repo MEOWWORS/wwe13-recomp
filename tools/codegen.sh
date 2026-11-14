@@ -10,4 +10,6 @@ LOG="$ROOT/logs/codegen-$(date +%Y%m%d-%H%M%S).log"
 test -x "$REXGLUE_BIN" || { echo "Run ./tools/setup.sh first." >&2; exit 1; }
 test -f "$XEX" || { echo "Place or symlink your owned XEX at $XEX." >&2; exit 1; }
 mkdir -p "$ROOT/logs"
+mkdir -p "$ROOT/out"
+export REX_DUMP_PATCHED_IMAGE="$ROOT/out/tu-image.bin"
 "$REXGLUE_BIN" codegen "$ROOT/wwe13_config.toml" 2>&1 | tee "$LOG"
