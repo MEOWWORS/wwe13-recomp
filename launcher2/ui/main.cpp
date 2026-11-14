@@ -19,6 +19,12 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "launcher_embedded_fonts.h"
+#include "launcher_embedded_images.h"
+#ifdef __ANDROID__
+#include <jni.h>
+#include <unistd.h>
+#endif
+#include <fstream>
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
@@ -141,6 +147,17 @@ struct AppState {
   SDL_Window* window = nullptr;
   SDL_Renderer* renderer = nullptr;
   Fonts fonts;
+#ifdef __ANDROID__
+  bool show_home = true;
+#else
+  bool show_home = false;
+#endif
+  bool show_logs = false;
+  int home_page = 0;  // 0 = main menu, 1 = options menu
+  std::string logs_text;
+  SDL_Texture* tex_bg = nullptr;
+  SDL_Texture* tex_logo = nullptr;
+  bool tex_tried = false;
   JobState job;
   std::atomic<bool> launch_process_started{false};
   std::string launch_warning;
@@ -586,7 +603,11 @@ std::vector<RendererChoice> StartupRendererChoices() {
                                          {"opengl", "OpenGL"},
                                          {"software", "software"}};
 #else
+#ifdef __ANDROID__
+  std::vector<RendererChoice> choices = {{"opengles2", "OpenGL ES 2"}, {"software", "software"}};
+#else
   std::vector<RendererChoice> choices = {{"opengl", "OpenGL"}, {"software", "software"}};
+#endif
 #endif
   // A user-forced driver is tried first; the rest remain as fallbacks.
   if (const char* requested = std::getenv("SDL_RENDER_DRIVER"); requested && *requested) {
@@ -1364,6 +1385,236 @@ void StartBugReport(AppState& app) {
   });
 }
 
+#ifdef __ANDROID__
+std::string AndroidDisplayName(const std::string& uri) {
+  JNIEnv* env = static_cast<JNIEnv*>(SDL_GetAndroidJNIEnv());
+  jobject activity = static_cast<jobject>(SDL_GetAndroidActivity());
+  if (!env || !activity) return {};
+  std::string result;
+  jclass cls = env->GetObjectClass(activity);
+  jmethodID method =
+      cls ? env->GetStaticMethodID(cls, "getDisplayName", "(Ljava/lang/String;)Ljava/lang/String;") : nullptr;
+  if (method) {
+    jstring argument = env->NewStringUTF(uri.c_str());
+    jstring returned = static_cast<jstring>(env->CallStaticObjectMethod(cls, method, argument));
+    if (returned) {
+      if (const char* chars = env->GetStringUTFChars(returned, nullptr)) {
+        result = chars;
+        env->ReleaseStringUTFChars(returned, chars);
+      }
+      env->DeleteLocalRef(returned);
+    }
+    env->DeleteLocalRef(argument);
+  }
+  if (env->ExceptionCheck()) env->ExceptionClear();
+  if (cls) env->DeleteLocalRef(cls);
+  env->DeleteLocalRef(activity);
+  return result;
+}
+
+// The Android picker returns content:// URIs. ISOs are read through a duplicated file descriptor; every other
+// file is copied under its real name so package import still sees the original file name.
+bool ResolvePickedUri(AppState& app, DialogKind kind, const std::string& selected, fs::path* out,
+                      std::string* error) {
+  if (selected.rfind("content://", 0) != 0) {
+    *out = Utf8Path(selected);
+    return true;
+  }
+  SDL_IOStream* io = SDL_IOFromFile(selected.c_str(), "rb");
+  if (!io) {
+    *error = std::string("The selected file could not be opened: ") + SDL_GetError();
+    return false;
+  }
+  std::string name = fs::path(AndroidDisplayName(selected)).filename().string();
+  if (name.empty() || name == "." || name == "..") name = "picked-file";
+  PerfLog("picker: %s -> '%s'", selected.c_str(), name.c_str());
+
+  if (kind == DialogKind::DiscImage) {
+    FILE* fp = static_cast<FILE*>(
+        SDL_GetPointerProperty(SDL_GetIOProperties(io), SDL_PROP_IOSTREAM_STDIO_FILE_POINTER, nullptr));
+    const int fd = fp ? ::dup(fileno(fp)) : -1;
+    if (fd >= 0) {
+      const std::string proc_path = "/proc/self/fd/" + std::to_string(fd);
+      std::ifstream probe(proc_path, std::ios::binary);
+      if (probe) {
+        probe.close();
+        SDL_CloseIO(io);
+        *out = Utf8Path(proc_path);  // fd stays open for the import job
+        PerfLog("picker: ISO via %s", proc_path.c_str());
+        return true;
+      }
+      ::close(fd);
+      PerfLog("picker: /proc fd reopen failed, copying the ISO instead");
+    }
+  }
+
+  std::error_code folder_error;
+  const fs::path folder = app.paths.userdata_dir / "imports";
+  fs::create_directories(folder, folder_error);
+  const fs::path destination = folder / Utf8Path(name);
+  std::ofstream output(destination, std::ios::binary | std::ios::trunc);
+  if (!output) {
+    SDL_CloseIO(io);
+    *error = "The selected file could not be copied into the app's storage.";
+    return false;
+  }
+  std::vector<char> buffer(1 << 20);
+  bool ok = true;
+  for (;;) {
+    const size_t got = SDL_ReadIO(io, buffer.data(), buffer.size());
+    if (got == 0) break;
+    output.write(buffer.data(), static_cast<std::streamsize>(got));
+    if (!output) {
+      ok = false;
+      break;
+    }
+  }
+  SDL_CloseIO(io);
+  output.close();
+  if (!ok) {
+    fs::remove(destination, folder_error);
+    *error = "Copying the selected file failed - the phone may be out of space.";
+    return false;
+  }
+  *out = destination;
+  return true;
+}
+
+// ---- CATONIX: Android "Select game folder" (picker + copy live in SDLActivity.java) ----
+struct AndroidActivityRef {
+  JNIEnv* env = nullptr;
+  jobject activity = nullptr;
+  jclass cls = nullptr;
+  AndroidActivityRef() {
+    env = static_cast<JNIEnv*>(SDL_GetAndroidJNIEnv());
+    activity = static_cast<jobject>(SDL_GetAndroidActivity());
+    if (env && activity) cls = env->GetObjectClass(activity);
+  }
+  ~AndroidActivityRef() {
+    if (!env) return;
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    if (cls) env->DeleteLocalRef(cls);
+    if (activity) env->DeleteLocalRef(activity);
+  }
+  AndroidActivityRef(const AndroidActivityRef&) = delete;
+  AndroidActivityRef& operator=(const AndroidActivityRef&) = delete;
+  jmethodID Method(const char* name, const char* signature) const {
+    return cls ? env->GetStaticMethodID(cls, name, signature) : nullptr;
+  }
+};
+
+bool AndroidPickGameFolder(const std::string& destination) {
+  AndroidActivityRef ref;
+  const jmethodID method = ref.Method("pickGameFolder", "(Ljava/lang/String;)Z");
+  if (!method) return false;
+  jstring argument = ref.env->NewStringUTF(destination.c_str());
+  const jboolean started = ref.env->CallStaticBooleanMethod(ref.cls, method, argument);
+  ref.env->DeleteLocalRef(argument);
+  if (ref.env->ExceptionCheck()) {
+    ref.env->ExceptionClear();
+    return false;
+  }
+  return started == JNI_TRUE;
+}
+
+int AndroidFolderState() {
+  AndroidActivityRef ref;
+  const jmethodID method = ref.Method("getFolderState", "()I");
+  if (!method) return 4;
+  const jint value = ref.env->CallStaticIntMethod(ref.cls, method);
+  if (ref.env->ExceptionCheck()) {
+    ref.env->ExceptionClear();
+    return 4;
+  }
+  return static_cast<int>(value);
+}
+
+int64_t AndroidFolderCounter(const char* name) {
+  AndroidActivityRef ref;
+  const jmethodID method = ref.Method(name, "()J");
+  if (!method) return 0;
+  const jlong value = ref.env->CallStaticLongMethod(ref.cls, method);
+  if (ref.env->ExceptionCheck()) {
+    ref.env->ExceptionClear();
+    return 0;
+  }
+  return static_cast<int64_t>(value);
+}
+
+std::string AndroidFolderMessage() {
+  AndroidActivityRef ref;
+  const jmethodID method = ref.Method("getFolderMessage", "()Ljava/lang/String;");
+  if (!method) return {};
+  std::string result;
+  jstring returned = static_cast<jstring>(ref.env->CallStaticObjectMethod(ref.cls, method));
+  if (returned) {
+    if (const char* chars = ref.env->GetStringUTFChars(returned, nullptr)) {
+      result = chars;
+      ref.env->ReleaseStringUTFChars(returned, chars);
+    }
+    ref.env->DeleteLocalRef(returned);
+  }
+  if (ref.env->ExceptionCheck()) ref.env->ExceptionClear();
+  return result;
+}
+
+void AndroidCancelFolderCopy() {
+  AndroidActivityRef ref;
+  const jmethodID method = ref.Method("cancelFolderCopy", "()V");
+  if (method) ref.env->CallStaticVoidMethod(ref.cls, method);
+}
+
+void StartSelectGameFolder(AppState& app) {
+  if (app.job.active.load()) return;
+  const Paths paths = app.paths;
+  const fs::path destination = paths.default_game_folder;
+  const Settings current_settings = app.settings;
+  if (!AndroidPickGameFolder(PathUtf8(destination))) {
+    SetBanner(app, "The folder picker could not be opened on this device.");
+    return;
+  }
+  BeginJob(app, "Choose your WWE '13 folder...", [&app, paths, destination, current_settings](
+                                                     const ProgressFn& progress, CancelFlag& cancel) {
+    bool cancel_sent = false;
+    int state = 1;
+    for (;;) {
+      if (cancel.load() && !cancel_sent) {
+        AndroidCancelFolderCopy();
+        cancel_sent = true;
+      }
+      state = AndroidFolderState();
+      if (state == 2) {
+        progress(static_cast<uint64_t>(AndroidFolderCounter("getFolderDone")),
+                 static_cast<uint64_t>(AndroidFolderCounter("getFolderTotal")), "Copying game files...");
+      } else if (state != 1) {
+        break;
+      }
+      SDL_Delay(150);
+    }
+    Result result = Result::Ok();
+    if (state == 4) {
+      const std::string message = AndroidFolderMessage();
+      result = Result::Fail(message.empty() ? std::string("Copying the game folder failed.") : message);
+    } else if (state != 3) {
+      result = Result::Fail("Folder selection was canceled.");
+    }
+    const GameFilesStatus status = result.ok ? CheckGameFolder(destination, paths) : GameFilesStatus{};
+    Settings settings = current_settings;
+    if (result.ok) settings.game_folder = destination;
+    const Result save = result.ok ? SaveSettings(paths, settings) : result;
+    return JobOutcome{save, [&app, status, settings] {
+                        app.game_files = status;
+                        app.settings = settings;
+                        if (status.ready()) {
+                          SetBanner(app, "Game folder added. Check the Title Update and DLC rows below.", true);
+                        } else {
+                          SetBanner(app, "Folder copied, but default.xex and default.xexp were not both found. Choose the folder that contains them.");
+                        }
+                      }};
+  });
+}
+#endif
+
 void ConsumeDialog(AppState& app) {
   DialogKind kind = DialogKind::None;
   bool failed = false;
@@ -1385,7 +1636,19 @@ void ConsumeDialog(AppState& app) {
   if (selections.empty()) return;
   std::vector<fs::path> paths;
   paths.reserve(selections.size());
+#ifdef __ANDROID__
+  for (const auto& selected : selections) {
+    fs::path resolved;
+    std::string resolve_error;
+    if (!ResolvePickedUri(app, kind, selected, &resolved, &resolve_error)) {
+      SetBanner(app, resolve_error);
+      return;
+    }
+    paths.push_back(resolved);
+  }
+#else
   for (const auto& selected : selections) paths.push_back(Utf8Path(selected));
+#endif
   switch (kind) {
     case DialogKind::Music:
       StartAddSongs(app, std::move(paths));
@@ -3644,7 +3907,262 @@ void DrawFooter(AppState& app) {
   ImGui::PopFont();
 }
 
+SDL_Texture* LoadEmbeddedTexture(SDL_Renderer* renderer, const unsigned char* data, unsigned long size) {
+  SDL_IOStream* io = SDL_IOFromConstMem(data, static_cast<size_t>(size));
+  if (!io) return nullptr;
+  SDL_Surface* surface = SDL_LoadPNG_IO(io, true);
+  if (!surface) return nullptr;
+  SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, surface);
+  SDL_DestroySurface(surface);
+  return texture;
+}
+
+std::string ReadFileTail(const fs::path& file, size_t max_bytes) {
+  std::ifstream stream(file, std::ios::binary | std::ios::ate);
+  if (!stream) return {};
+  const std::streamoff size = stream.tellg();
+  const std::streamoff start = size > static_cast<std::streamoff>(max_bytes) ? size - static_cast<std::streamoff>(max_bytes) : 0;
+  stream.seekg(start);
+  std::string text(static_cast<size_t>(size - start), '\0');
+  stream.read(text.data(), static_cast<std::streamsize>(text.size()));
+  return text;
+}
+
+void RefreshLogsText(AppState& app) {
+  std::string text = "=== launcher.log ===\n" + ReadFileTail(LauncherLogFilePath(), 24 * 1024);
+  std::error_code error;
+  fs::path newest;
+  fs::file_time_type newest_time{};
+  for (const auto& entry : fs::directory_iterator(app.paths.logs_dir, error)) {
+    std::error_code entry_error;
+    if (!entry.is_regular_file(entry_error) || entry.path().filename() == "launcher.log") continue;
+    const auto time = entry.last_write_time(entry_error);
+    if (newest.empty() || time > newest_time) {
+      newest = entry.path();
+      newest_time = time;
+    }
+  }
+  if (!newest.empty()) {
+    text += "\n=== " + PathUtf8(newest.filename()) + " ===\n" + ReadFileTail(newest, 48 * 1024);
+  } else {
+    text += "\n(no game log found yet)\n";
+  }
+  app.logs_text = std::move(text);
+}
+
+// ---- CATONIX home screen: plain text menu drawn straight over the artwork ----
+bool HomeMenuItem(const AppState& app, const char* label, ImFont* font, float font_px, ImVec2 pos,
+                  bool enabled) {
+  const ImVec2 text_size = font->CalcTextSizeA(font_px, FLT_MAX, 0.0f, label);
+  const float pad = S(app, 8.0f);
+  ImGui::SetCursorPos(pos);
+  const ImVec2 origin = ImGui::GetCursorScreenPos();
+  ImGui::PushID(label);
+  const bool pressed =
+      ImGui::InvisibleButton("##home-item", ImVec2(text_size.x + pad * 2.0f, text_size.y + pad));
+  const bool hot = enabled && (ImGui::IsItemHovered() || ImGui::IsItemActive());
+  ImGui::PopID();
+  const ImU32 color = !enabled ? IM_COL32(170, 170, 170, 110)
+                      : hot    ? ImGui::ColorConvertFloat4ToU32(kAccent)
+                               : IM_COL32(245, 245, 245, 255);
+  ImDrawList* draw = ImGui::GetWindowDrawList();
+  const ImVec2 text_pos(origin.x + pad, origin.y + pad * 0.5f);
+  draw->AddText(font, font_px, ImVec2(text_pos.x + 2.0f, text_pos.y + 2.0f), IM_COL32(0, 0, 0, 190), label);
+  draw->AddText(font, font_px, text_pos, color, label);
+  return pressed && enabled;
+}
+
+void DrawHome(AppState& app) {
+  if (!app.tex_tried) {
+    app.tex_tried = true;
+    app.tex_bg = LoadEmbeddedTexture(app.renderer, kBgPng, kBgPngSize);
+    app.tex_logo = LoadEmbeddedTexture(app.renderer, kLogoPng, kLogoPngSize);
+  }
+
+  const ImVec2 size = ImGui::GetIO().DisplaySize;
+  const bool ready = app.game_files.ready();
+  const bool busy = app.job.active.load();
+
+  ImGui::SetNextWindowPos(ImVec2(0, 0));
+  ImGui::SetNextWindowSize(size);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+  ImGui::Begin("WWE13 Home", nullptr,
+      ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+      ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus |
+      ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_NoScrollbar |
+      ImGuiWindowFlags_NoScrollWithMouse);
+
+  ImGui::Dummy(size);
+  ImDrawList* draw = ImGui::GetWindowDrawList();
+
+  // Embedded background artwork, scaled to cover the screen.
+  draw->AddRectFilled(ImVec2(0, 0), size, IM_COL32(12, 13, 17, 255));
+  if (app.tex_bg) {
+    float tw = 1280.0f, th = 720.0f;
+    SDL_GetTextureSize(app.tex_bg, &tw, &th);
+    const float scale = std::max(size.x / tw, size.y / th);
+    const ImVec2 ds(tw * scale, th * scale);
+    const ImVec2 p((size.x - ds.x) * 0.5f, (size.y - ds.y) * 0.5f);
+    draw->AddImage(
+        static_cast<ImTextureID>(reinterpret_cast<intptr_t>(app.tex_bg)),
+        p, ImVec2(p.x + ds.x, p.y + ds.y));
+  }
+  // One soft shade behind the menu keeps the text readable.
+  draw->AddRectFilledMultiColor(
+      ImVec2(0, 0), ImVec2(size.x * 0.42f, size.y),
+      IM_COL32(0, 0, 0, 150), IM_COL32(0, 0, 0, 0),
+      IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 150));
+
+  const float margin = S(app, 18.0f);
+  const bool options_page = app.home_page == 1;
+  const float menu_px = size.y * (options_page ? 0.07f : 0.085f);
+  const float step = size.y * (options_page ? 0.115f : 0.135f);
+  const float menu_x = size.x * 0.02f;
+  float menu_y = size.y * 0.045f;
+  ImFont* menu_font = app.fonts.oswald_bold;
+  auto place = [&]() {
+    const ImVec2 at(menu_x, menu_y);
+    menu_y += step;
+    return at;
+  };
+
+  if (!options_page) {
+    if (HomeMenuItem(app, "PLAY", menu_font, menu_px, place(), ready && !busy && !app.gpus.empty())) {
+      StartLaunch(app);
+    }
+#ifdef __ANDROID__
+    if (HomeMenuItem(app, "SELECT FOLDER", menu_font, menu_px, place(), !busy)) StartSelectGameFolder(app);
+#else
+    if (HomeMenuItem(app, "IMPORT ISO", menu_font, menu_px, place(), !busy)) {
+      static const SDL_DialogFileFilter filters[]{{"Disc images", "iso;img"}};
+      RequestDialog(app, DialogKind::DiscImage, filters, 1, false);
+    }
+#endif
+    if (HomeMenuItem(app, "OPTIONS", menu_font, menu_px, place(), true)) {
+      app.show_logs = false;
+      app.home_page = 1;
+    }
+  } else {
+    if (HomeMenuItem(app, "SETTINGS", menu_font, menu_px, place(), true)) {
+      app.tab = Tab::Settings;
+      app.show_home = false;
+    }
+    if (HomeMenuItem(app, "CONTROLS", menu_font, menu_px, place(), true)) {
+      app.tab = Tab::Controls;
+      app.show_home = false;
+    }
+    if (HomeMenuItem(app, "CONTENT", menu_font, menu_px, place(), true)) {
+      app.tab = Tab::Content;
+      app.show_home = false;
+    }
+    if (HomeMenuItem(app, "GAME FILES", menu_font, menu_px, place(), true)) {
+      app.tab = Tab::GameFiles;
+      app.show_home = false;
+    }
+    if (HomeMenuItem(app, "ADD TU / DLC", menu_font, menu_px, place(), !busy)) {
+      static const SDL_DialogFileFilter filters[]{{"Updates and packs", "*"}};
+      RequestDialog(app, DialogKind::Package, filters, 1, true);
+    }
+    if (HomeMenuItem(app, "LOGS", menu_font, menu_px, place(), true)) {
+      app.show_logs = !app.show_logs;
+      if (app.show_logs) RefreshLogsText(app);
+    }
+    if (HomeMenuItem(app, "BACK", menu_font, menu_px, place(), true)) {
+      app.show_logs = false;
+      app.home_page = 0;
+    }
+  }
+
+  // Credits, bottom right, every line right-aligned so nothing wraps mid-word.
+  {
+    const float right = size.x - margin;
+    const float credit_px = size.y * 0.055f;
+    const float small_px = size.y * 0.032f;
+    float credit_y = size.y * 0.60f;
+    auto right_text = [&](ImFont* font, float px, const char* text, ImU32 color) {
+      const float width = font->CalcTextSizeA(px, FLT_MAX, 0.0f, text).x;
+      draw->AddText(font, px, ImVec2(right - width + 1.5f, credit_y + 1.5f), IM_COL32(0, 0, 0, 170), text);
+      draw->AddText(font, px, ImVec2(right - width, credit_y), color, text);
+      credit_y += px * 1.3f;
+    };
+    right_text(app.fonts.oswald_semibold, credit_px, "CREDITS", IM_COL32(255, 255, 255, 240));
+    right_text(app.fonts.barlow_medium, small_px, "PORT BY: CATONIX", IM_COL32(225, 225, 225, 235));
+    right_text(app.fonts.barlow_medium, small_px, "SITE: VOLVISIONMODS.COM", IM_COL32(225, 225, 225, 235));
+  }
+
+  // Bottom left: progress while a job runs, otherwise the banner and game-file status.
+  if (busy) {
+    ImGui::SetCursorPos(ImVec2(margin, size.y - margin - S(app, 112.0f)));
+    ImGui::BeginChild("home-progress", ImVec2(size.x * 0.55f, S(app, 112.0f)), false,
+        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBackground);
+    DrawProgress(app);
+    ImGui::EndChild();
+  } else {
+    const float status_px = size.y * 0.034f;
+    const float status_y = size.y - margin - status_px * 1.3f;
+#ifdef __ANDROID__
+    const char* need_text = "GAME FILES REQUIRED - TAP SELECT FOLDER";
+#else
+    const char* need_text = "GAME FILES REQUIRED - IMPORT YOUR ISO";
+#endif
+    draw->AddText(app.fonts.barlow_medium, status_px, ImVec2(margin + 1.5f, status_y + 1.5f),
+        IM_COL32(0, 0, 0, 170), ready ? "GAME FILES READY" : need_text);
+    draw->AddText(app.fonts.barlow_medium, status_px, ImVec2(margin, status_y),
+        ImGui::ColorConvertFloat4ToU32(ready ? kSuccess : kDanger), ready ? "GAME FILES READY" : need_text);
+    if (!app.banner.empty()) {
+      ImGui::SetCursorPos(ImVec2(margin, status_y - S(app, 58.0f)));
+      ImGui::BeginChild("home-banner", ImVec2(size.x * 0.5f, S(app, 52.0f)), false,
+          ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBackground);
+      DrawBanner(app);
+      ImGui::EndChild();
+    }
+  }
+
+  // Logs remain available as a separate diagnostic view.
+  if (app.show_logs) {
+    ImGui::SetCursorPos(S(app, 40.0f, 35.0f));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.025f, 0.03f, 0.04f, 0.97f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, S(app, 10.0f));
+    ImGui::BeginChild("home-logs", ImVec2(size.x - S(app, 80.0f),
+        size.y - S(app, 70.0f)), ImGuiChildFlags_Borders);
+
+    ImGui::PushFont(app.fonts.oswald_semibold);
+    ImGui::TextColored(kText, "LAUNCHER LOGS");
+    ImGui::PopFont();
+    ImGui::Spacing();
+
+    if (ImGui::Button("Copy Logs", S(app, 150.0f, 40.0f))) {
+      SDL_SetClipboardText(app.logs_text.c_str());
+      SetBanner(app, "Logs copied to the clipboard.", true);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Refresh", S(app, 115.0f, 40.0f))) RefreshLogsText(app);
+    ImGui::SameLine();
+    if (ImGui::Button("Close", S(app, 115.0f, 40.0f))) app.show_logs = false;
+
+    ImGui::Separator();
+    ImGui::BeginChild("home-logs-text", ImVec2(0, 0), false,
+        ImGuiWindowFlags_HorizontalScrollbar);
+    ImGui::PushFont(app.fonts.barlow_small);
+    ImGui::TextUnformatted(app.logs_text.c_str());
+    ImGui::PopFont();
+    ImGui::EndChild();
+
+    ImGui::EndChild();
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
+  }
+
+  ImGui::End();
+  ImGui::PopStyleVar(2);
+}
+
 void DrawMain(AppState& app) {
+  if (app.show_home) {
+    DrawHome(app);
+    return;
+  }
   ImGui::SetNextWindowPos(ImVec2(0, 0));
   ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
   ImGui::Begin("WWE '13 PC Recompiled", nullptr,
@@ -3683,6 +4201,16 @@ void DrawMain(AppState& app) {
   ImGui::PopStyleVar();
   ImGui::PopStyleColor();
   ImGui::End();
+  {
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    ImGui::SetNextWindowPos(ImVec2(display.x - S(app, 130.0f), S(app, 8.0f)));
+    ImGui::SetNextWindowSize(ImVec2(S(app, 120.0f), S(app, 44.0f)));
+    ImGui::Begin("home-back", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove |
+                     ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar);
+    if (ImGui::Button("Home", ImVec2(S(app, 110.0f), S(app, 36.0f)))) app.show_home = true;
+    ImGui::End();
+  }
 }
 
 // Fit-to-window: the layout is designed for at least 1024x640 (times the display scale). When the
@@ -4068,7 +4596,7 @@ bool Initialize(AppState& app, int argc, char** argv) {
   }
   PerfLog("startup: SDL_Init ok, video_driver=%s", SDL_GetCurrentVideoDriver());
   app.window = SDL_CreateWindow("WWE '13 PC Recompiled v" WWE13_LAUNCHER_VERSION, app.startup_width, app.startup_height,
-                                SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
+                                SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_FULLSCREEN);
   if (!app.window) {
     ShowStartupFailure(std::string("WWE '13 Recomp could not open its window on this PC.\n\n") +
                        kNoVulkanMessage + "\n\nDetails: " + SDL_GetError());

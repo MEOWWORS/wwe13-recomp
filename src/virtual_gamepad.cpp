@@ -316,20 +316,20 @@ void VirtualGamepadOverlay::OnDraw(ImGuiIO& io) {
   DrawStick(draw, point(kLeftStickX, kLeftStickY), h * kStickRadius, "L");
   DrawStick(draw, point(kRightStickX, kRightStickY), h * kStickRadius, "R");
 
-  DrawButton(draw, point(0.085f, 0.445f), h * 0.035f, "↑", utility_color);
-  DrawButton(draw, point(0.085f, 0.535f), h * 0.035f, "↓", utility_color);
-  DrawButton(draw, point(0.035f, 0.49f), h * 0.035f, "←", utility_color);
-  DrawButton(draw, point(0.135f, 0.49f), h * 0.035f, "→", utility_color);
+  DrawButton(draw, point(0.085f, 0.445f), h * 0.043f, "↑", utility_color);
+  DrawButton(draw, point(0.085f, 0.535f), h * 0.043f, "↓", utility_color);
+  DrawButton(draw, point(0.035f, 0.49f), h * 0.043f, "←", utility_color);
+  DrawButton(draw, point(0.135f, 0.49f), h * 0.043f, "→", utility_color);
 
-  DrawButton(draw, point(0.925f, 0.50f), h * 0.038f, "A", button_color);
-  DrawButton(draw, point(0.875f, 0.55f), h * 0.038f, "B", button_color);
-  DrawButton(draw, point(0.875f, 0.45f), h * 0.038f, "X", button_color);
-  DrawButton(draw, point(0.825f, 0.50f), h * 0.038f, "Y", button_color);
+  DrawButton(draw, point(0.925f, 0.50f), h * 0.05f, "A", button_color);
+  DrawButton(draw, point(0.875f, 0.55f), h * 0.05f, "B", button_color);
+  DrawButton(draw, point(0.875f, 0.45f), h * 0.05f, "X", button_color);
+  DrawButton(draw, point(0.825f, 0.50f), h * 0.05f, "Y", button_color);
 
-  DrawButton(draw, point(0.12f, 0.10f), h * 0.035f, "LB", utility_color);
-  DrawButton(draw, point(0.88f, 0.10f), h * 0.035f, "RB", utility_color);
-  DrawButton(draw, point(0.12f, 0.235f), h * 0.035f, "LT", utility_color);
-  DrawButton(draw, point(0.88f, 0.235f), h * 0.035f, "RT", utility_color);
+  DrawButton(draw, point(0.12f, 0.10f), h * 0.043f, "LB", utility_color);
+  DrawButton(draw, point(0.88f, 0.10f), h * 0.043f, "RB", utility_color);
+  DrawButton(draw, point(0.12f, 0.235f), h * 0.043f, "LT", utility_color);
+  DrawButton(draw, point(0.88f, 0.235f), h * 0.043f, "RT", utility_color);
 
   DrawButton(draw, point(0.42f, 0.91f), h * 0.027f, "BACK", utility_color);
   DrawButton(draw, point(0.58f, 0.91f), h * 0.027f, "START", utility_color);
