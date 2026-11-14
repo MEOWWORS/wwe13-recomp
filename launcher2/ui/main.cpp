@@ -10,6 +10,7 @@
 #endif
 
 #include "launcher_core.h"
+#include "miniz.h"
 #include "launcher_version.h"
 #include "native_keys.h"
 #include "update.h"
@@ -155,6 +156,8 @@ struct AppState {
   bool show_logs = false;
   int home_page = 0;  // 0 = main menu, 1 = options menu
   std::string logs_text;
+  int logs_export_state = 0;
+  std::string logs_export_message;
   SDL_Texture* tex_bg = nullptr;
   SDL_Texture* tex_logo = nullptr;
   bool tex_tried = false;
@@ -1549,6 +1552,51 @@ std::string AndroidFolderMessage() {
   jstring returned = static_cast<jstring>(ref.env->CallStaticObjectMethod(ref.cls, method));
   if (returned) {
     if (const char* chars = ref.env->GetStringUTFChars(returned, nullptr)) {
+      result = chars;
+      ref.env->ReleaseStringUTFChars(returned, chars);
+    }
+    ref.env->DeleteLocalRef(returned);
+  }
+  if (ref.env->ExceptionCheck()) ref.env->ExceptionClear();
+  return result;
+}
+
+
+bool AndroidSaveLogs(const std::string& source) {
+  AndroidActivityRef ref;
+  const jmethodID method = ref.Method("saveLogs", "(Ljava/lang/String;)Z");
+  if (!method) return false;
+  jstring argument = ref.env->NewStringUTF(source.c_str());
+  const jboolean result = ref.env->CallStaticBooleanMethod(ref.cls, method, argument);
+  ref.env->DeleteLocalRef(argument);
+  if (ref.env->ExceptionCheck()) {
+    ref.env->ExceptionClear();
+    return false;
+  }
+  return result == JNI_TRUE;
+}
+
+int AndroidSaveLogsState() {
+  AndroidActivityRef ref;
+  const jmethodID method = ref.Method("getSaveLogsState", "()I");
+  if (!method) return 4;
+  const jint result = ref.env->CallStaticIntMethod(ref.cls, method);
+  if (ref.env->ExceptionCheck()) {
+    ref.env->ExceptionClear();
+    return 4;
+  }
+  return static_cast<int>(result);
+}
+
+std::string AndroidSaveLogsMessage() {
+  AndroidActivityRef ref;
+  const jmethodID method = ref.Method("getSaveLogsMessage", "()Ljava/lang/String;");
+  if (!method) return "Cannot read export status.";
+  jstring returned = static_cast<jstring>(ref.env->CallStaticObjectMethod(ref.cls, method));
+  std::string result;
+  if (returned) {
+    const char* chars = ref.env->GetStringUTFChars(returned, nullptr);
+    if (chars) {
       result = chars;
       ref.env->ReleaseStringUTFChars(returned, chars);
     }
@@ -3928,6 +3976,68 @@ std::string ReadFileTail(const fs::path& file, size_t max_bytes) {
   return text;
 }
 
+
+bool CreateLogsArchive(const AppState& app, fs::path* archive, std::string* error) {
+  std::error_code ec;
+  fs::create_directories(app.paths.logs_dir, ec);
+  if (ec) {
+    *error = "Cannot access the logs folder: " + ec.message();
+    return false;
+  }
+
+  const fs::path destination = app.paths.logs_dir / "WWE13-Logs.zip";
+  std::error_code remove_error;
+  fs::remove(destination, remove_error);
+
+  mz_zip_archive zip{};
+  if (!mz_zip_writer_init_file(&zip, destination.string().c_str(), 0)) {
+    *error = "Cannot create ZIP archive.";
+    return false;
+  }
+
+  bool ok = true;
+  for (const auto& entry : fs::recursive_directory_iterator(app.paths.logs_dir, ec)) {
+    if (ec) {
+      *error = "Cannot scan logs folder: " + ec.message();
+      ok = false;
+      break;
+    }
+    if (!entry.is_regular_file(ec) || ec) {
+      ec.clear();
+      continue;
+    }
+    const fs::path file = entry.path();
+    if (file == destination) continue;
+
+    const fs::path relative = fs::relative(file, app.paths.logs_dir, ec);
+    if (ec) {
+      *error = "Cannot resolve a log filename: " + ec.message();
+      ok = false;
+      break;
+    }
+    if (!mz_zip_writer_add_file(&zip, relative.generic_string().c_str(),
+                                file.string().c_str(), nullptr, 0,
+                                MZ_BEST_COMPRESSION)) {
+      *error = "Could not add " + PathUtf8(relative) + " to the ZIP.";
+      ok = false;
+      break;
+    }
+  }
+
+  if (ok && !mz_zip_writer_finalize_archive(&zip)) {
+    *error = "Could not finish the ZIP archive.";
+    ok = false;
+  }
+  mz_zip_writer_end(&zip);
+
+  if (!ok) {
+    fs::remove(destination, ec);
+    return false;
+  }
+  *archive = destination;
+  return true;
+}
+
 void RefreshLogsText(AppState& app) {
   std::string text = "=== launcher.log ===\n" + ReadFileTail(LauncherLogFilePath(), 24 * 1024);
   std::error_code error;
@@ -4136,6 +4246,35 @@ void DrawHome(AppState& app) {
       SDL_SetClipboardText(app.logs_text.c_str());
       SetBanner(app, "Logs copied to the clipboard.", true);
     }
+#ifdef __ANDROID__
+    ImGui::SameLine();
+    if (ImGui::Button("Save Logs", S(app, 150.0f, 40.0f))) {
+      fs::path archive;
+      std::string error;
+      if (CreateLogsArchive(app, &archive, &error)) {
+        if (AndroidSaveLogs(PathUtf8(archive))) {
+          app.logs_export_state = 1;
+          app.logs_export_message = "Choose Downloads in the save dialog.";
+        } else {
+          std::error_code remove_error;
+          fs::remove(archive, remove_error);
+          app.logs_export_state = 4;
+          app.logs_export_message = "Could not open the save dialog.";
+        }
+      } else {
+        app.logs_export_state = 4;
+        app.logs_export_message = error;
+      }
+    }
+    const int export_state = AndroidSaveLogsState();
+    if (export_state != 0) {
+      app.logs_export_state = export_state;
+      app.logs_export_message = AndroidSaveLogsMessage();
+    }
+    if (!app.logs_export_message.empty()) {
+      ImGui::TextWrapped("%s", app.logs_export_message.c_str());
+    }
+#endif
     ImGui::SameLine();
     if (ImGui::Button("Refresh", S(app, 115.0f, 40.0f))) RefreshLogsText(app);
     ImGui::SameLine();

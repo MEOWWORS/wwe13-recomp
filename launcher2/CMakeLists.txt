@@ -132,7 +132,14 @@ if(NOT WWE13_LAUNCHER_STUB_CORE AND NOT TARGET wwe13_launcher_core)
   message(FATAL_ERROR "The real launcher core is unavailable; configure with -DWWE13_LAUNCHER_STUB_CORE=ON for UI testing")
 endif()
 
-add_executable(wwe13-launcher WIN32 ui/main.cpp ui/native_keys.cpp "${WWE13_EMBEDDED_FONTS}")
+set(WWE13_EMBEDDED_IMAGES "${CMAKE_CURRENT_BINARY_DIR}/launcher_embedded_images.h")
+add_custom_command(OUTPUT "${WWE13_EMBEDDED_IMAGES}"
+  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_LIST_DIR}/ui/generate_images.py"
+    "${CMAKE_CURRENT_LIST_DIR}/assets" "${WWE13_EMBEDDED_IMAGES}"
+  DEPENDS "${CMAKE_CURRENT_LIST_DIR}/ui/generate_images.py"
+    "${CMAKE_CURRENT_LIST_DIR}/assets/bg.png" "${CMAKE_CURRENT_LIST_DIR}/assets/logo.png"
+  VERBATIM)
+add_executable(wwe13-launcher WIN32 ui/main.cpp ui/native_keys.cpp "${WWE13_EMBEDDED_FONTS}" "${WWE13_EMBEDDED_IMAGES}")
 add_dependencies(wwe13-launcher wwe13_font_compressor)
 target_include_directories(wwe13-launcher PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/core" "${CMAKE_CURRENT_LIST_DIR}/ui"

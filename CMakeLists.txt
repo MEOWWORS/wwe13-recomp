@@ -161,6 +161,21 @@ if(ANDROID)
   )
   add_custom_target(wwe13_launcher_fonts DEPENDS "${WWE13_EMBEDDED_FONTS}")
 
+  set(WWE13_EMBEDDED_IMAGES
+      "${CMAKE_CURRENT_BINARY_DIR}/launcher_embedded_images.h")
+  add_custom_command(
+    OUTPUT "${WWE13_EMBEDDED_IMAGES}"
+    COMMAND "${Python3_EXECUTABLE}"
+      "${WWE13_LAUNCHER_DIR}/ui/generate_images.py"
+      "${WWE13_LAUNCHER_DIR}/assets"
+      "${WWE13_EMBEDDED_IMAGES}"
+    DEPENDS "${WWE13_LAUNCHER_DIR}/ui/generate_images.py"
+      "${WWE13_LAUNCHER_DIR}/assets/bg.png"
+      "${WWE13_LAUNCHER_DIR}/assets/logo.png"
+    VERBATIM
+  )
+  add_custom_target(wwe13_launcher_images DEPENDS "${WWE13_EMBEDDED_IMAGES}")
+
   include("${WWE13_LAUNCHER_DIR}/../cmake/wwe13_version.cmake")
   file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/launcher-version")
   configure_file(
@@ -177,6 +192,7 @@ if(ANDROID)
     "${WWE13_LAUNCHER_DIR}/ui/main.cpp"
     "${WWE13_LAUNCHER_DIR}/ui/native_keys.cpp"
     "${WWE13_EMBEDDED_FONTS}"
+    "${WWE13_EMBEDDED_IMAGES}"
   )
   target_include_directories(main PRIVATE
     "${WWE13_LAUNCHER_DIR}/core"
@@ -188,7 +204,7 @@ if(ANDROID)
     wwe13_launcher_core
     wwe13_launcher_imgui
   )
-  add_dependencies(main wwe13_launcher_fonts)
+  add_dependencies(main wwe13_launcher_fonts wwe13_launcher_images)
 endif()
 
 if(WIN32)

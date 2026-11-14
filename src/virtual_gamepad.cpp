@@ -50,10 +50,10 @@ Control HitTest(float x, float y) {
   }
 
   // ABXY cluster.
-  if (Distance(x, y, 0.925f, 0.50f) < 0.055f) return Control::kA;
-  if (Distance(x, y, 0.875f, 0.55f) < 0.055f) return Control::kB;
-  if (Distance(x, y, 0.875f, 0.45f) < 0.055f) return Control::kX;
-  if (Distance(x, y, 0.825f, 0.50f) < 0.055f) return Control::kY;
+  if (Distance(x, y, 0.94f, 0.50f) < 0.055f) return Control::kA;
+  if (Distance(x, y, 0.875f, 0.58f) < 0.055f) return Control::kB;
+  if (Distance(x, y, 0.875f, 0.42f) < 0.055f) return Control::kX;
+  if (Distance(x, y, 0.81f, 0.50f) < 0.055f) return Control::kY;
 
   // Shoulder buttons and triggers.
   if (x < 0.25f && y < 0.17f) return Control::kLeftShoulder;
@@ -122,21 +122,84 @@ void RebuildState(VirtualGamepadState& state) {
 }
 
 void DrawButton(ImDrawList* draw, ImVec2 center, float radius,
-                const char* label, ImU32 color) {
-  draw->AddCircleFilled(center, radius, color, 32);
-  draw->AddCircle(center, radius, IM_COL32(255, 255, 255, 170), 32, 2.0f);
+                const char* label, ImU32 color, bool pressed) {
+  const float offset = pressed ? 1.5f : 0.0f;
+  center.y += offset;
+
+  // Deep shadow and metallic outer rim.
+  draw->AddCircleFilled(ImVec2(center.x, center.y + 3.0f), radius + 2.0f,
+                        IM_COL32(0, 0, 0, 190), 40);
+  draw->AddCircleFilled(center, radius,
+                        pressed ? IM_COL32(170, 190, 215, 245)
+                                : IM_COL32(190, 205, 225, 225), 40);
+  draw->AddCircleFilled(center, radius - 2.5f,
+                        IM_COL32(13, 18, 27, 245), 40);
+
+  // Raised button face with a subtle inner highlight.
+  draw->AddCircleFilled(center, radius - 5.0f,
+                        pressed ? IM_COL32(75, 105, 145, 250)
+                                : color, 40);
+  draw->AddCircle(center, radius - 5.0f,
+                  IM_COL32(225, 235, 250, pressed ? 240 : 155), 40, 1.5f);
+  draw->AddCircle(center, radius - 9.0f,
+                  IM_COL32(255, 255, 255, pressed ? 95 : 45), 40, 1.0f);
+
+  const float font_size = std::max(ImGui::GetFontSize() * 1.35f,
+                                   radius * 0.58f);
   const ImVec2 text_size = ImGui::CalcTextSize(label);
-  draw->AddText(ImVec2(center.x - text_size.x * 0.5f,
-                       center.y - text_size.y * 0.5f),
-                IM_COL32(255, 255, 255, 230), label);
+  const float scale = font_size / ImGui::GetFontSize();
+  const ImVec2 scaled_size(text_size.x * scale, text_size.y * scale);
+  const ImVec2 text_pos(center.x - scaled_size.x * 0.5f,
+                        center.y - scaled_size.y * 0.5f);
+
+  draw->AddText(ImGui::GetFont(), font_size,
+                ImVec2(text_pos.x + 1.0f, text_pos.y + 2.0f),
+                IM_COL32(0, 0, 0, 210), label);
+  draw->AddText(ImGui::GetFont(), font_size, text_pos,
+                IM_COL32(255, 255, 255, 250), label);
 }
+
+static ImVec2 g_knob(0.0f, 0.0f);
+
+void DrawStick(ImDrawList* draw, ImVec2 center, float radius,
+               const char* label, bool pressed) {
+  draw->AddCircleFilled(ImVec2(center.x, center.y + 4.0f), radius + 3.0f,
+                        IM_COL32(0, 0, 0, 165), 48);
+  draw->AddCircleFilled(center, radius,
+                        IM_COL32(165, 180, 200, 210), 48);
+  draw->AddCircleFilled(center, radius - 3.0f,
+                        IM_COL32(16, 22, 32, 235), 48);
+  draw->AddCircle(center, radius - 3.0f,
+                  IM_COL32(240, 245, 255, 190), 48, 2.0f);
+
+  const ImVec2 knob(center.x + g_knob.x, center.y + g_knob.y);
+  const float knob_radius = radius * 0.43f;
+  draw->AddCircleFilled(ImVec2(knob.x, knob.y + 3.0f), knob_radius,
+                        IM_COL32(0, 0, 0, 180), 40);
+  draw->AddCircleFilled(knob, knob_radius,
+                        pressed ? IM_COL32(145, 175, 215, 250)
+                                : IM_COL32(75, 90, 112, 245), 40);
+  draw->AddCircle(knob, knob_radius,
+                  IM_COL32(255, 255, 255, 220), 40, 2.0f);
+  draw->AddCircle(knob, knob_radius - 5.0f,
+                  IM_COL32(255, 255, 255, 65), 40, 1.0f);
+
+  const float font_size = ImGui::GetFontSize() * 1.25f;
+  const ImVec2 text_size = ImGui::CalcTextSize(label);
+  const float scale = font_size / ImGui::GetFontSize();
+  draw->AddText(ImGui::GetFont(), font_size,
+                ImVec2(center.x - text_size.x * scale * 0.5f,
+                       center.y + radius + 5.0f),
+                IM_COL32(255, 255, 255, 240), label);
+}
+
 
 void DrawStick(ImDrawList* draw, ImVec2 center, float radius,
                const char* label) {
   draw->AddCircleFilled(center, radius, IM_COL32(25, 28, 34, 115), 40);
   draw->AddCircle(center, radius, IM_COL32(235, 235, 235, 150), 40, 2.0f);
-  draw->AddCircleFilled(center, radius * 0.40f, IM_COL32(100, 110, 125, 190), 32);
-  draw->AddCircle(center, radius * 0.40f, IM_COL32(255, 255, 255, 180), 32, 2.0f);
+  draw->AddCircleFilled(ImVec2(center.x + g_knob.x, center.y + g_knob.y), radius * 0.40f, IM_COL32(100, 110, 125, 190), 32);
+  draw->AddCircle(ImVec2(center.x + g_knob.x, center.y + g_knob.y), radius * 0.40f, IM_COL32(255, 255, 255, 180), 32, 2.0f);
   const ImVec2 text_size = ImGui::CalcTextSize(label);
   draw->AddText(ImVec2(center.x - text_size.x * 0.5f,
                        center.y + radius + 4.0f),
@@ -310,29 +373,86 @@ void VirtualGamepadOverlay::OnDraw(ImGuiIO& io) {
     return ImVec2(w * x, h * y);
   };
 
-  const ImU32 button_color = IM_COL32(35, 42, 54, 145);
-  const ImU32 utility_color = IM_COL32(35, 42, 54, 125);
+  const ImU32 button_color = IM_COL32(43, 57, 78, 235);
+  const ImU32 utility_color = IM_COL32(37, 48, 65, 225);
 
-  DrawStick(draw, point(kLeftStickX, kLeftStickY), h * kStickRadius, "L");
-  DrawStick(draw, point(kRightStickX, kRightStickY), h * kStickRadius, "R");
+  bool left_pressed = false;
+  bool right_pressed = false;
+  bool a_pressed = false, b_pressed = false;
+  bool x_pressed = false, y_pressed = false;
+  bool up_pressed = false, down_pressed = false;
+  bool left_dpad_pressed = false, right_dpad_pressed = false;
+  bool lb_pressed = false, rb_pressed = false;
+  bool lt_pressed = false, rt_pressed = false;
+  bool back_pressed = false, start_pressed = false;
 
-  DrawButton(draw, point(0.085f, 0.445f), h * 0.043f, "↑", utility_color);
-  DrawButton(draw, point(0.085f, 0.535f), h * 0.043f, "↓", utility_color);
-  DrawButton(draw, point(0.035f, 0.49f), h * 0.043f, "←", utility_color);
-  DrawButton(draw, point(0.135f, 0.49f), h * 0.043f, "→", utility_color);
+  {
+    std::lock_guard lock(state_->mutex);
+    for (const auto& [pointer_id, touch] : state_->touches) {
+      (void)pointer_id;
+      switch (touch.control) {
+        case Control::kLeftStick: left_pressed = true; break;
+        case Control::kRightStick: right_pressed = true; break;
+        case Control::kA: a_pressed = true; break;
+        case Control::kB: b_pressed = true; break;
+        case Control::kX: x_pressed = true; break;
+        case Control::kY: y_pressed = true; break;
+        case Control::kDpadUp: up_pressed = true; break;
+        case Control::kDpadDown: down_pressed = true; break;
+        case Control::kDpadLeft: left_dpad_pressed = true; break;
+        case Control::kDpadRight: right_dpad_pressed = true; break;
+        case Control::kLeftShoulder: lb_pressed = true; break;
+        case Control::kRightShoulder: rb_pressed = true; break;
+        case Control::kLeftTrigger: lt_pressed = true; break;
+        case Control::kRightTrigger: rt_pressed = true; break;
+        case Control::kBack: back_pressed = true; break;
+        case Control::kStart: start_pressed = true; break;
+        case Control::kNone: break;
+      }
+    }
+  }
 
-  DrawButton(draw, point(0.925f, 0.50f), h * 0.05f, "A", button_color);
-  DrawButton(draw, point(0.875f, 0.55f), h * 0.05f, "B", button_color);
-  DrawButton(draw, point(0.875f, 0.45f), h * 0.05f, "X", button_color);
-  DrawButton(draw, point(0.825f, 0.50f), h * 0.05f, "Y", button_color);
+  g_knob = ImVec2(h * kStickRadius * 0.6f * state_->left_x / 32767.0f,
+                  -h * kStickRadius * 0.6f * state_->left_y / 32767.0f);
+  DrawStick(draw, point(kLeftStickX, kLeftStickY),
+            h * kStickRadius, "L", left_pressed);
 
-  DrawButton(draw, point(0.12f, 0.10f), h * 0.043f, "LB", utility_color);
-  DrawButton(draw, point(0.88f, 0.10f), h * 0.043f, "RB", utility_color);
-  DrawButton(draw, point(0.12f, 0.235f), h * 0.043f, "LT", utility_color);
-  DrawButton(draw, point(0.88f, 0.235f), h * 0.043f, "RT", utility_color);
+  g_knob = ImVec2(h * kStickRadius * 0.6f * state_->right_x / 32767.0f,
+                  -h * kStickRadius * 0.6f * state_->right_y / 32767.0f);
+  DrawStick(draw, point(kRightStickX, kRightStickY),
+            h * kStickRadius, "R", right_pressed);
 
-  DrawButton(draw, point(0.42f, 0.91f), h * 0.027f, "BACK", utility_color);
-  DrawButton(draw, point(0.58f, 0.91f), h * 0.027f, "START", utility_color);
+  DrawButton(draw, point(0.085f, 0.42f), h * 0.055f, "^",
+             utility_color, up_pressed);
+  DrawButton(draw, point(0.085f, 0.56f), h * 0.055f, "v",
+             utility_color, down_pressed);
+  DrawButton(draw, point(0.035f, 0.49f), h * 0.055f, "<",
+             utility_color, left_dpad_pressed);
+  DrawButton(draw, point(0.135f, 0.49f), h * 0.055f, ">",
+             utility_color, right_dpad_pressed);
+
+  DrawButton(draw, point(0.94f, 0.50f), h * 0.065f, "A",
+             button_color, a_pressed);
+  DrawButton(draw, point(0.875f, 0.58f), h * 0.065f, "B",
+             button_color, b_pressed);
+  DrawButton(draw, point(0.875f, 0.42f), h * 0.065f, "X",
+             button_color, x_pressed);
+  DrawButton(draw, point(0.81f, 0.50f), h * 0.065f, "Y",
+             button_color, y_pressed);
+
+  DrawButton(draw, point(0.12f, 0.10f), h * 0.055f, "LB",
+             utility_color, lb_pressed);
+  DrawButton(draw, point(0.88f, 0.10f), h * 0.055f, "RB",
+             utility_color, rb_pressed);
+  DrawButton(draw, point(0.12f, 0.235f), h * 0.055f, "LT",
+             utility_color, lt_pressed);
+  DrawButton(draw, point(0.88f, 0.235f), h * 0.055f, "RT",
+             utility_color, rt_pressed);
+
+  DrawButton(draw, point(0.42f, 0.91f), h * 0.035f, "BACK",
+             utility_color, back_pressed);
+  DrawButton(draw, point(0.58f, 0.91f), h * 0.035f, "START",
+             utility_color, start_pressed);
 }
 
 }  // namespace wwe13

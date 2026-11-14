@@ -236,8 +236,8 @@ LaunchPlan BuildLaunchPlan(const Paths& paths, const Settings& settings,
   const fs::path log_file = paths.logs_dir /
       ("wwe13-" + internal::LocalTimestamp(std::chrono::system_clock::now(), "%Y%m%d-%H%M%S") + ".log");
   const std::array<std::string, 10> fixed_arguments = {
-      "--async_shader_compilation=false",
-      "--vulkan_async_skip_incomplete_frames=false",
+      "--async_shader_compilation=true",
+      "--vulkan_async_skip_incomplete_frames=true",
       fullscreen ? "--fullscreen=true" : "--fullscreen=false",
       "--vulkan_allow_present_mode_immediate=false",
       "--ignore_offset_for_ranged_allocations=true",

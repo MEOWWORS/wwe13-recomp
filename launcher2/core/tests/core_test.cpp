@@ -169,7 +169,7 @@ void TestLaunchPlan(const fs::path& root) {
         assert(plan.working_directory == paths.exe_dir);
         const std::vector<std::string> fixed = {
             wwe13::launcher::internal::PathToUtf8(settings.game_folder),
-            "--async_shader_compilation=false", "--vulkan_async_skip_incomplete_frames=false",
+            "--async_shader_compilation=true", "--vulkan_async_skip_incomplete_frames=true",
             "--fullscreen=true", "--vulkan_allow_present_mode_immediate=false",
             "--ignore_offset_for_ranged_allocations=true", "--log_verbose=false", "--mnk_mode=true"};
         assert(plan.arguments.size() >= fixed.size() + 4);
