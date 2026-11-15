@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# JAVA_HOME can point to a stale sdkman "current" symlink; pick a JDK that exists (Gradle 8.12 + AGP need 17-21).
+for J in /usr/lib/jvm/java-17-openjdk-amd64 /usr/local/sdkman/candidates/java/21.0.13.0+2-ms; do
+  if [ -x "$J/bin/javac" ]; then export JAVA_HOME="$J"; break; fi
+done
+[ -x "${JAVA_HOME:-/nonexistent}/bin/javac" ] || { echo "FAILED: no usable JDK found"; exit 1; }
+echo "JAVA_HOME=$JAVA_HOME"
 SDK=/workspaces/tools/rexglue
 GAME=/workspaces/wwe13-recomp
 APKP=$SDK/thirdparty/sdl3/android-project

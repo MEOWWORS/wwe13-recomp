@@ -270,7 +270,7 @@ LaunchPlan BuildLaunchPlan(const Paths& paths, const Settings& settings,
   // Fill a 21:9 or 16:10 screen (stretched 16:9 picture) instead of pillarboxing it.
   if (effective.stretch_to_fill) plan.arguments.emplace_back("--present_letterbox=false");
 #if defined(__ANDROID__)
-  plan.arguments.emplace_back("--vulkan_upload_hoist=1");  // count-only census, no behaviour change
+  plan.arguments.emplace_back("--vulkan_upload_hoist=2");  // hoist small safe uploads out of the render pass (test)
 #endif
 
   plan.environment = {
