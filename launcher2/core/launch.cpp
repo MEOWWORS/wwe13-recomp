@@ -269,10 +269,14 @@ LaunchPlan BuildLaunchPlan(const Paths& paths, const Settings& settings,
   }
   // Fill a 21:9 or 16:10 screen (stretched 16:9 picture) instead of pillarboxing it.
   if (effective.stretch_to_fill) plan.arguments.emplace_back("--present_letterbox=false");
+#if defined(__ANDROID__)
+  plan.arguments.emplace_back("--vulkan_upload_hoist=1");  // count-only census, no behaviour change
+#endif
 
   plan.environment = {
       {"REX_DEBUG_UI", "false"},
-      {"WWE13_RATE_CENSUS", ""},
+      {"WWE13_RATE_CENSUS", "1"},
+      {"WWE13_GPU_TIMING", "1"},
       {"WWE13_FRAME_TIME", ""},
       {"WWE13_PERF_OVERLAY", ""},
       {"WWE13_THREAD_PROFILE", ""},
