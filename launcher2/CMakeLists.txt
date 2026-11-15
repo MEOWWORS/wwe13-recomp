@@ -138,6 +138,7 @@ add_custom_command(OUTPUT "${WWE13_EMBEDDED_IMAGES}"
     "${CMAKE_CURRENT_LIST_DIR}/assets" "${WWE13_EMBEDDED_IMAGES}"
   DEPENDS "${CMAKE_CURRENT_LIST_DIR}/ui/generate_images.py"
     "${CMAKE_CURRENT_LIST_DIR}/assets/bg.png" "${CMAKE_CURRENT_LIST_DIR}/assets/logo.png"
+    "${CMAKE_CURRENT_LIST_DIR}/assets/avatar.png"
   VERBATIM)
 add_executable(wwe13-launcher WIN32 ui/main.cpp ui/native_keys.cpp "${WWE13_EMBEDDED_FONTS}" "${WWE13_EMBEDDED_IMAGES}")
 add_dependencies(wwe13-launcher wwe13_font_compressor)

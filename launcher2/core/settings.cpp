@@ -217,7 +217,7 @@ std::string BuildIni(const Paths& paths, const Settings& settings) {
   const std::set<std::string> replaced = {"schema", "anti_aliasing", "resolution", "frame_rate",
                                           "display", "gpu", "game_folder", "auto_start",
                                           "auto_backup", "stretch_to_fill", "sync_to_display",
-                                          "check_updates", "skipped_update_version"};
+                                          "check_updates", "skipped_update_version", "touch_controls"};
   std::vector<std::string> unknown_settings;
   std::vector<std::string> outside_settings;
   std::string active_section;
@@ -257,6 +257,9 @@ std::string BuildIni(const Paths& paths, const Settings& settings) {
          << "\r\nstretch_to_fill=" << (settings.stretch_to_fill ? "1" : "0")
          << "\r\nsync_to_display=" << (settings.sync_to_display ? "1" : "0")
          << "\r\ncheck_updates=" << (settings.check_updates ? "1" : "0")
+         << "\r\ntouch_controls="
+         << (settings.touch_controls == TouchControls::kXbox360 ? "xbox360"
+             : settings.touch_controls == TouchControls::kNone ? "none" : "android")
          << "\r\nskipped_update_version=" << settings.skipped_update_version << "\r\n";
   for (const auto& line : unknown_settings) output << line << "\r\n";
   if (!outside_settings.empty()) {
@@ -346,6 +349,12 @@ Settings LoadSettingsImpl(const Paths& paths) {
   }
   const std::string stretch_to_fill = IniValue(entries, "stretch_to_fill");
   settings.stretch_to_fill = stretch_to_fill == "1" || EqualsAsciiInsensitive(stretch_to_fill, "true");
+  const std::string touch_controls = IniValue(entries, "touch_controls");
+  if (EqualsAsciiInsensitive(touch_controls, "xbox360")) {
+    settings.touch_controls = TouchControls::kXbox360;
+  } else if (EqualsAsciiInsensitive(touch_controls, "none")) {
+    settings.touch_controls = TouchControls::kNone;
+  }
   const std::string sync_to_display = IniValue(entries, "sync_to_display");
   if (!sync_to_display.empty()) {
     settings.sync_to_display = sync_to_display == "1" || EqualsAsciiInsensitive(sync_to_display, "true");

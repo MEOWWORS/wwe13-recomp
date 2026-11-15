@@ -8,6 +8,7 @@
 
 #include <rex/input/input_driver.h>
 #include <rex/ui/imgui_dialog.h>
+#include <rex/ui/immediate_drawer.h>
 #include <rex/ui/window_listener.h>
 
 namespace wwe13 {
@@ -83,12 +84,20 @@ class VirtualGamepadOverlay final : public rex::ui::ImGuiDialog {
   VirtualGamepadOverlay(
       rex::ui::ImGuiDrawer* drawer,
       std::shared_ptr<VirtualGamepadState> state);
+  ~VirtualGamepadOverlay();
 
  protected:
   void OnDraw(ImGuiIO& io) override;
 
  private:
+  // Loads the button artwork once per immediate drawer. False = draw the plain buttons instead.
+  bool EnsureAtlas();
+  void DrawAndroidStyle(ImGuiIO& io);
+
   std::shared_ptr<VirtualGamepadState> state_;
+  std::unique_ptr<rex::ui::ImmediateTexture> atlas_;
+  rex::ui::ImmediateDrawer* atlas_drawer_ = nullptr;
+  bool atlas_failed_ = false;
 };
 
 }  // namespace wwe13

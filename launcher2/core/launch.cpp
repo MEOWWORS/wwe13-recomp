@@ -290,7 +290,9 @@ LaunchPlan BuildLaunchPlan(const Paths& paths, const Settings& settings,
       // on Linux the SDK's WaitForHostDisplayVBlank/GetHostDisplayRefreshHz are no-ops). Default on.
       {"WWE13_HOST_VSYNC", effective.sync_to_display ? "1" : "0"},
       {"WWE13_INTERNAL_RES", resolution.internal ? resolution.internal : ""},
-      {"WWE13_SCENE_AA", effective.anti_aliasing == AntiAliasing::kFaster2x ? "2x" : ""}};
+      {"WWE13_SCENE_AA", effective.anti_aliasing == AntiAliasing::kFaster2x ? "2x" : ""},
+      {"WWE13_TOUCH_STYLE", effective.touch_controls == TouchControls::kXbox360 ? "xbox"
+                            : effective.touch_controls == TouchControls::kNone ? "none" : "android"}};
 #ifndef _WIN32
   // RenderDoc's implicit Vulkan layer draws a capture banner over the game. Disable only that layer
   // for the game process; keep other loader filters already chosen by the user (for example, Steam

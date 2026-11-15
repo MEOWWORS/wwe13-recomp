@@ -50,12 +50,14 @@ enum class Resolution { k480p, k576p, k720p, k1080p, k1440p };
 enum class FrameRate { kClassic, kKeep60, kLock30 };
 enum class AntiAliasing { kOriginal4x, kFaster2x };
 enum class DisplayMode { kFullscreen, kWindowed };
+enum class TouchControls { kAndroid, kXbox360, kNone };
 
 struct Settings {
   Resolution resolution = Resolution::k720p;
   FrameRate frame_rate = FrameRate::kClassic;
   AntiAliasing anti_aliasing = AntiAliasing::kOriginal4x;
   DisplayMode display = DisplayMode::kFullscreen;
+  TouchControls touch_controls = TouchControls::kAndroid;  // on-screen buttons (Android builds)
   std::string gpu_id;    // stable id of the chosen Vulkan device ("" = recommended)
   fs::path game_folder;  // folder holding default.xex + default.xexp
   bool auto_start = false;          // "Start straight away next time" (hold Shift at start to come back)

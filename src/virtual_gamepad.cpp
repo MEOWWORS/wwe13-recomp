@@ -3,6 +3,15 @@
 #include <cstdio>
 #include "virtual_gamepad.h"
 
+#include <cstdlib>
+#include <vector>
+
+#include <SDL3/SDL.h>
+#include <rex/ui/imgui_drawer.h>
+
+#include "controls_atlas_rects.h"
+#include "launcher_embedded_images.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -16,6 +25,93 @@ namespace wwe13 {
 namespace {
 
 using Control = VirtualGamepadState::Control;
+
+// Touch style: "android" (artwork buttons, the default) or "xbox" (plain A/B/X/Y), from WWE13_TOUCH_STYLE.
+// 0 = xbox, 1 = android, 2 = none (a real gamepad is used; nothing is drawn or touched).
+int TouchStyle() {
+  static const int style = [] {
+    const char* value = std::getenv("WWE13_TOUCH_STYLE");
+    if (value && std::strcmp(value, "xbox") == 0) return 0;
+    if (value && std::strcmp(value, "none") == 0) return 2;
+    return 1;
+  }();
+  return style;
+}
+
+bool AndroidStyle() { return TouchStyle() == 1; }
+
+// The virtual pad only counts as a connected controller while it is shown.
+bool PadActive(const VirtualGamepadState& state) {
+  return state.gameplay_active.load() && TouchStyle() != 2;
+}
+
+// Screen width / height, updated on every touch and draw (the Android layout is in screen-height units).
+float g_aspect = 16.0f / 9.0f;
+
+// Android layout. All sizes are in units of the screen height, so buttons stay round on any screen.
+// anchor: 0 = x from the left edge, 1 = x from the right edge, 2 = x offset from the centre.
+struct PadItem {
+  controls_atlas::Rect rect;
+  int anchor;
+  float x, y, half_width;
+  Control control;
+  bool round;
+};
+constexpr float kPadStickX = 0.25f;
+constexpr float kPadStickY = 0.72f;
+constexpr float kPadStickRadius = 0.19f;
+constexpr float kPadStickThrow = kPadStickRadius * 0.62f;
+constexpr PadItem kPadItems[] = {
+    {controls_atlas::kStrike, 1, 0.31f, 0.36f, 0.075f, Control::kX, true},
+    {controls_atlas::kFinisher, 1, 0.125f, 0.36f, 0.075f, Control::kY, true},
+    {controls_atlas::kGrapple, 1, 0.325f, 0.545f, 0.077f, Control::kA, true},
+    {controls_atlas::kReversal, 1, 0.13f, 0.545f, 0.077f, Control::kRightTrigger, true},
+    {controls_atlas::kAction, 1, 0.42f, 0.73f, 0.066f, Control::kB, true},
+    {controls_atlas::kRun, 1, 0.265f, 0.73f, 0.066f, Control::kLeftTrigger, true},
+    {controls_atlas::kMenu, 1, 0.115f, 0.73f, 0.060f, Control::kBack, true},
+    {controls_atlas::kL, 2, -0.26f, 0.94f, 0.085f, Control::kLeftShoulder, false},
+    {controls_atlas::kR, 2, -0.07f, 0.94f, 0.085f, Control::kRightShoulder, false},
+    {controls_atlas::kPause, 2, 0.085f, 0.94f, 0.038f, Control::kStart, true},
+    {controls_atlas::kCamera, 2, 0.18f, 0.94f, 0.038f, Control::kDpadUp, true},
+    {controls_atlas::kEye, 2, 0.27f, 0.94f, 0.035f, Control::kDpadDown, true},
+};
+
+// The item's centre x in screen-height units.
+float PadItemX(const PadItem& item, float aspect) {
+  switch (item.anchor) {
+    case 1: return aspect - item.x;
+    case 2: return aspect * 0.5f + item.x;
+    default: return item.x;
+  }
+}
+
+float PadItemHalfHeight(const PadItem& item) {
+  return item.half_width * float(item.rect.h) / float(item.rect.w);
+}
+
+// x and y are 0..1 across the screen.
+Control HitTestAndroid(float x, float y, float aspect) {
+  const float xh = x * aspect;
+  {
+    const float dx = xh - kPadStickX;
+    const float dy = y - kPadStickY;
+    if (std::sqrt(dx * dx + dy * dy) <= kPadStickRadius) {
+      return Control::kLeftStick;
+    }
+  }
+  for (const PadItem& item : kPadItems) {
+    const float dx = xh - PadItemX(item, aspect);
+    const float dy = y - item.y;
+    if (item.round) {
+      if (std::sqrt(dx * dx + dy * dy) <= item.half_width * 1.08f) {
+        return item.control;
+      }
+    } else if (std::abs(dx) <= item.half_width && std::abs(dy) <= PadItemHalfHeight(item) * 1.25f) {
+      return item.control;
+    }
+  }
+  return Control::kNone;
+}
 
 constexpr float kLeftStickX = 0.19f;
 constexpr float kLeftStickY = 0.76f;
@@ -84,8 +180,11 @@ void RebuildState(VirtualGamepadState& state) {
     (void)pointer_id;
     switch (touch.control) {
       case Control::kLeftStick: {
-        const float dx = (touch.x - kLeftStickX) / kStickRadius;
-        const float dy = (touch.y - kLeftStickY) / kStickRadius;
+        const bool pad_style = AndroidStyle();
+        const float dx = pad_style ? (touch.x * g_aspect - kPadStickX) / kPadStickThrow
+                                   : (touch.x - kLeftStickX) / kStickRadius;
+        const float dy = pad_style ? (touch.y - kPadStickY) / kPadStickThrow
+                                   : (touch.y - kLeftStickY) / kStickRadius;
         const float magnitude = std::sqrt(dx * dx + dy * dy);
         const float scale = magnitude > 1.0f ? 1.0f / magnitude : 1.0f;
         state.left_x = StickAxis(dx * scale);
@@ -232,7 +331,7 @@ rex::X_RESULT VirtualGamepadInputDriver::GetCapabilities(
     uint32_t user_index, uint32_t flags,
     rex::input::X_INPUT_CAPABILITIES* out_caps) {
   (void)flags;
-  if (user_index != 0 || !state_->gameplay_active.load()) {
+  if (user_index != 0 || !PadActive(*state_)) {
     return static_cast<rex::X_RESULT>(0x0000048F);
   }
   if (out_caps) {
@@ -254,7 +353,7 @@ rex::X_RESULT VirtualGamepadInputDriver::GetCapabilities(
 
 rex::X_RESULT VirtualGamepadInputDriver::GetState(
     uint32_t user_index, rex::input::X_INPUT_STATE* out_state) {
-  if (user_index != 0 || !state_->gameplay_active.load()) {
+  if (user_index != 0 || !PadActive(*state_)) {
     return static_cast<rex::X_RESULT>(0x0000048F);
   }
 
@@ -277,7 +376,7 @@ rex::X_RESULT VirtualGamepadInputDriver::GetState(
 rex::X_RESULT VirtualGamepadInputDriver::SetState(
     uint32_t user_index, rex::input::X_INPUT_VIBRATION* vibration) {
   (void)vibration;
-  return user_index == 0 && state_->gameplay_active.load()
+  return user_index == 0 && PadActive(*state_)
              ? static_cast<rex::X_RESULT>(0)
              : static_cast<rex::X_RESULT>(0x0000048F);
 }
@@ -287,7 +386,7 @@ rex::X_RESULT VirtualGamepadInputDriver::GetKeystroke(
     rex::input::X_INPUT_KEYSTROKE* out_keystroke) {
   (void)flags;
   (void)out_keystroke;
-  return user_index == 0 && state_->gameplay_active.load()
+  return user_index == 0 && PadActive(*state_)
              ? static_cast<rex::X_RESULT>(0x000010D2)
              : static_cast<rex::X_RESULT>(0x0000048F);
 }
@@ -320,7 +419,7 @@ void VirtualGamepadInputDriver::ReleaseAllTouches() {
 }
 
 void VirtualGamepadInputDriver::OnTouchEvent(rex::ui::TouchEvent& event) {
-  if (!state_->gameplay_active.load() || !attached_window_) return;
+  if (!PadActive(*state_) || !attached_window_) return;
 
   const float width = static_cast<float>(attached_window_->GetActualPhysicalWidth());
   const float height = static_cast<float>(attached_window_->GetActualPhysicalHeight());
@@ -335,7 +434,8 @@ void VirtualGamepadInputDriver::OnTouchEvent(rex::ui::TouchEvent& event) {
 
   switch (event.action()) {
     case rex::ui::TouchEvent::Action::kDown: {
-      const Control control = HitTest(x, y);
+      g_aspect = width / height;
+      const Control control = AndroidStyle() ? HitTestAndroid(x, y, g_aspect) : HitTest(x, y);
       if (control == Control::kNone) return;
       state_->touches[pointer_id] = {control, x, y};
       event.set_handled(true);
@@ -356,6 +456,111 @@ void VirtualGamepadInputDriver::OnTouchEvent(rex::ui::TouchEvent& event) {
   }
 
   RebuildState(*state_);
+}
+
+
+VirtualGamepadOverlay::~VirtualGamepadOverlay() {
+  // The texture belongs to the immediate drawer, which may already be gone: never destroy it from here.
+  (void)atlas_.release();
+}
+
+bool VirtualGamepadOverlay::EnsureAtlas() {
+  rex::ui::ImmediateDrawer* drawer = imgui_drawer() ? imgui_drawer()->immediate_drawer() : nullptr;
+  if (!drawer) {
+    return false;
+  }
+  if (drawer != atlas_drawer_) {
+    (void)atlas_.release();  // made by the previous drawer
+    atlas_drawer_ = drawer;
+    atlas_failed_ = false;
+  }
+  if (atlas_) {
+    return true;
+  }
+  if (atlas_failed_) {
+    return false;
+  }
+  atlas_failed_ = true;
+  SDL_IOStream* io = SDL_IOFromConstMem(kControlsAtlasPng, static_cast<size_t>(kControlsAtlasPngSize));
+  if (!io) {
+    return false;
+  }
+  SDL_Surface* loaded = SDL_LoadPNG_IO(io, true);
+  if (!loaded) {
+    return false;
+  }
+  SDL_Surface* rgba = SDL_ConvertSurface(loaded, SDL_PIXELFORMAT_RGBA32);
+  SDL_DestroySurface(loaded);
+  if (!rgba) {
+    return false;
+  }
+  const uint32_t width = static_cast<uint32_t>(rgba->w);
+  const uint32_t height = static_cast<uint32_t>(rgba->h);
+  std::vector<uint8_t> pixels(size_t(width) * size_t(height) * 4);
+  for (uint32_t row = 0; row < height; ++row) {
+    std::memcpy(pixels.data() + size_t(row) * width * 4,
+                static_cast<const uint8_t*>(rgba->pixels) + size_t(row) * size_t(rgba->pitch),
+                size_t(width) * 4);
+  }
+  SDL_DestroySurface(rgba);
+  atlas_ = drawer->CreateTexture(width, height, rex::ui::ImmediateTextureFilter::kLinear, false,
+                                 pixels.data());
+  if (!atlas_) {
+    return false;
+  }
+  atlas_failed_ = false;
+  return true;
+}
+
+void VirtualGamepadOverlay::DrawAndroidStyle(ImGuiIO& io) {
+  ImDrawList* draw = ImGui::GetForegroundDrawList();
+  const float h = io.DisplaySize.y;
+  const float aspect = io.DisplaySize.x / h;
+  g_aspect = aspect;
+  const ImTextureID texture = reinterpret_cast<ImTextureID>(atlas_.get());
+  const float atlas_w = float(controls_atlas::kWidth);
+  const float atlas_h = float(controls_atlas::kHeight);
+
+  uint32_t pressed = 0;
+  int16_t stick_x = 0, stick_y = 0;
+  {
+    std::lock_guard lock(state_->mutex);
+    for (const auto& [pointer_id, touch] : state_->touches) {
+      (void)pointer_id;
+      pressed |= uint32_t(1) << uint32_t(touch.control);
+    }
+    stick_x = state_->left_x;
+    stick_y = state_->left_y;
+  }
+  const auto is_pressed = [pressed](Control control) {
+    return (pressed & (uint32_t(1) << uint32_t(control))) != 0;
+  };
+  const auto draw_sprite = [&](const controls_atlas::Rect& rect, float cx, float cy, float half_w,
+                               float half_h, bool down) {
+    const float scale = down ? 0.93f : 1.0f;
+    const ImVec2 p0((cx - half_w * scale) * h, (cy - half_h * scale) * h);
+    const ImVec2 p1((cx + half_w * scale) * h, (cy + half_h * scale) * h);
+    const ImVec2 uv0(float(rect.x) / atlas_w, float(rect.y) / atlas_h);
+    const ImVec2 uv1(float(rect.x + rect.w) / atlas_w, float(rect.y + rect.h) / atlas_h);
+    draw->AddImage(texture, p0, p1, uv0, uv1,
+                   down ? IM_COL32(190, 215, 255, 215) : IM_COL32(255, 255, 255, 118));
+  };
+
+  // Movement pad (left stick), with a soft marker that follows the thumb.
+  const controls_atlas::Rect& pad = controls_atlas::kDpad;
+  draw_sprite(pad, kPadStickX, kPadStickY, kPadStickRadius,
+              kPadStickRadius * float(pad.h) / float(pad.w), false);
+  if (is_pressed(Control::kLeftStick)) {
+    const ImVec2 knob((kPadStickX + kPadStickThrow * float(stick_x) / 32767.0f) * h,
+                      (kPadStickY - kPadStickThrow * float(stick_y) / 32767.0f) * h);
+    draw->AddCircleFilled(knob, kPadStickRadius * 0.34f * h, IM_COL32(255, 255, 255, 70), 40);
+    draw->AddCircle(knob, kPadStickRadius * 0.34f * h, IM_COL32(255, 255, 255, 190), 40, 2.0f);
+  }
+
+  for (const PadItem& item : kPadItems) {
+    draw_sprite(item.rect, PadItemX(item, aspect), item.y, item.half_width, PadItemHalfHeight(item),
+                is_pressed(item.control));
+  }
 }
 
 VirtualGamepadOverlay::VirtualGamepadOverlay(
@@ -399,6 +604,14 @@ void VirtualGamepadOverlay::OnDraw(ImGuiIO& io) {
                         IM_COL32(0, 0, 0, 150), 6.0f);
     draw->AddText(ImGui::GetFont(), fps_size, fps_pos, IM_COL32(120, 255, 160, 255), fps_text);
   }
+  if (TouchStyle() == 2) {
+    return;  // no on-screen controls
+  }
+  if (AndroidStyle() && EnsureAtlas()) {
+    DrawAndroidStyle(io);
+    return;
+  }
+
   const ImU32 button_color = IM_COL32(43, 57, 78, 235);
   const ImU32 utility_color = IM_COL32(37, 48, 65, 225);
 

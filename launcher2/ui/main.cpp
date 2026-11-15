@@ -75,8 +75,9 @@ using namespace wwe13::launcher;
 
 constexpr ImVec4 kWindow{0.0588f, 0.0627f, 0.0784f, 1.0f};
 constexpr ImVec4 kSidebar{0.0314f, 0.0353f, 0.0431f, 1.0f};
-constexpr ImVec4 kPanel{0.0863f, 0.0941f, 0.1137f, 1.0f};
-constexpr ImVec4 kRaised{0.1059f, 0.1137f, 0.1373f, 1.0f};
+constexpr ImVec4 kPanel{0.02f, 0.024f, 0.032f, 0.62f};  // translucent: the background artwork shows through
+constexpr ImVec4 kPanelSolid{0.0863f, 0.0941f, 0.1137f, 1.0f};
+constexpr ImVec4 kRaised{0.09f, 0.10f, 0.12f, 0.80f};
 constexpr ImVec4 kBorder{0.1725f, 0.1843f, 0.2157f, 1.0f};
 constexpr ImVec4 kText{0.9255f, 0.9294f, 0.9412f, 1.0f};
 constexpr ImVec4 kSecondary{0.7255f, 0.7373f, 0.7686f, 1.0f};
@@ -93,7 +94,7 @@ constexpr char kNoVulkanMessage[] =
     "This PC has no graphics card with Vulkan 1.1 support, which WWE '13 Recomp needs. Update the "
     "graphics driver, or use a PC with a Vulkan-capable graphics card.";
 
-enum class Tab { Play, Settings, Controls, Content, GameFiles };
+enum class Tab { Play, Settings, Controls, Content, GameFiles, Credits };
 enum class ContentCategory { Superstars, Entrances, Arenas, Logos, Videos, Music, SaveData };
 enum class DialogKind { None, Music, DiscImage, Package, GameFolder, Backup, CreationFiles, CreationFolder, FullSave, Video };
 
@@ -160,6 +161,8 @@ struct AppState {
   std::string logs_export_message;
   SDL_Texture* tex_bg = nullptr;
   SDL_Texture* tex_logo = nullptr;
+  SDL_Texture* tex_avatar = nullptr;
+  bool avatar_tried = false;
   bool tex_tried = false;
   JobState job;
   std::atomic<bool> launch_process_started{false};
@@ -286,8 +289,8 @@ void SetMinimumWindowSize(const AppState& app) {
 }
 
 const std::array<std::pair<Tab, const char*>, 5> kTabs{{
-    {Tab::Play, "Play"}, {Tab::Settings, "Settings"}, {Tab::Controls, "Controls"}, {Tab::Content, "Content"},
-    {Tab::GameFiles, "Game files"},
+    {Tab::Settings, "Settings"}, {Tab::Controls, "Controls"}, {Tab::Content, "Content"},
+    {Tab::GameFiles, "Game files"}, {Tab::Credits, "Credits"},
 }};
 
 std::string PathUtf8(const fs::path& path) {
@@ -1840,12 +1843,15 @@ float FillListHeight(const AppState& app, float reserve = 0.0f) {
 
 void DrawNavButton(AppState& app, Tab tab, const char* label) {
   const bool selected = app.tab == tab;
-  ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, S(app, 9.0f));
+  ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, S(app, 2.0f));
   ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, S(app, 14.0f, 0.0f));
   ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.0f, 0.5f));
-  ImGui::PushStyleColor(ImGuiCol_Button, selected ? kRaised : kSidebar);
-  ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kRaised);
-  ImGui::PushStyleColor(ImGuiCol_ButtonActive, kRaised);
+  // Flat list rows over the artwork: the selected row is light with dark text.
+  const ImVec4 nav_selected(0.95f, 0.95f, 0.96f, 0.96f);
+  ImGui::PushStyleColor(ImGuiCol_Button, selected ? nav_selected : ImVec4(0.0f, 0.0f, 0.0f, 0.46f));
+  ImGui::PushStyleColor(ImGuiCol_ButtonHovered, selected ? nav_selected : ImVec4(1.0f, 1.0f, 1.0f, 0.16f));
+  ImGui::PushStyleColor(ImGuiCol_ButtonActive, selected ? nav_selected : ImVec4(1.0f, 1.0f, 1.0f, 0.24f));
+  ImGui::PushStyleColor(ImGuiCol_Text, selected ? ImVec4(0.06f, 0.06f, 0.08f, 1.0f) : kText);
   ImGui::PushFont(app.fonts.oswald_medium);
   if (ImGui::Button(label, ImVec2(-1.0f, S(app, 46.0f)))) {
     app.tab = tab;
@@ -1858,7 +1864,7 @@ void DrawNavButton(AppState& app, Tab tab, const char* label) {
     draw->AddRectFilled(ImVec2(min.x, min.y + S(app, 8.0f)), ImVec2(min.x + S(app, 3.0f), max.y - S(app, 8.0f)),
                         ImGui::ColorConvertFloat4ToU32(kAccent), S(app, 2.0f));
   }
-  ImGui::PopStyleColor(3);
+  ImGui::PopStyleColor(4);
   ImGui::PopStyleVar(3);
   ImGui::PopFont();
 }
@@ -1991,7 +1997,7 @@ DialogResult LauncherDialog(const AppState& app, bool& open, const char* id, con
   const ImVec2 secondary_size(S(app, 120.0f), S(app, 38.0f));
   ImGui::SetNextWindowSizeConstraints(ImVec2(width, 0.0f), ImVec2(width, FLT_MAX));
   ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-  ImGui::PushStyleColor(ImGuiCol_PopupBg, kPanel);
+  ImGui::PushStyleColor(ImGuiCol_PopupBg, kPanelSolid);
   ImGui::PushStyleColor(ImGuiCol_Border, kBorder);
   ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, S(app, 14.0f));
   ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, S(app, 1.0f));
@@ -2215,7 +2221,7 @@ void DrawUpdateNotes(AppState& app) {
   ImGui::OpenPopup("update-whats-new");
   ImGui::SetNextWindowSizeConstraints(ImVec2(width, 0.0f), ImVec2(width, FLT_MAX));
   ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-  ImGui::PushStyleColor(ImGuiCol_PopupBg, kPanel);
+  ImGui::PushStyleColor(ImGuiCol_PopupBg, kPanelSolid);
   ImGui::PushStyleColor(ImGuiCol_Border, kBorder);
   ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, S(app, 14.0f));
   ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, S(app, 1.0f));
@@ -3484,6 +3490,28 @@ void FinishKeyCapture(AppState& app, const char* key, bool cancelled) {
 }
 
 void DrawControls(AppState& app) {
+  if (BeginPanel(app, "touch-controls", ImVec2(0.0f, S(app, 150.0f)))) {
+    DrawPanelHeading(app, "ON-SCREEN CONTROLS", "Choose the buttons shown over the game.");
+    ImGui::Spacing();
+    const float touch_width = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x * 2.0f) / 3.0f;
+    const TouchControls touch = app.settings.touch_controls;
+    DrawSegment(app, "Android", touch == TouchControls::kAndroid, touch_width, [&app] {
+      app.settings.touch_controls = TouchControls::kAndroid;
+      SaveSettings(app);
+    });
+    ImGui::SameLine();
+    DrawSegment(app, "Xbox 360", touch == TouchControls::kXbox360, touch_width, [&app] {
+      app.settings.touch_controls = TouchControls::kXbox360;
+      SaveSettings(app);
+    });
+    ImGui::SameLine();
+    DrawSegment(app, "None (gamepad)", touch == TouchControls::kNone, touch_width, [&app] {
+      app.settings.touch_controls = TouchControls::kNone;
+      SaveSettings(app);
+    });
+  }
+  EndPanel();
+  ImGui::Spacing();
   const std::vector<KeyBinding>& bindings = KeyBindings();
   if (app.controls.keys.size() != bindings.size()) app.controls = DefaultKeyboardControls();
   const std::vector<bool> duplicates = DuplicateKeyBindings(app.controls);
@@ -3837,7 +3865,8 @@ void DrawContent(AppState& app) {
 
 
 void DrawSidebar(AppState& app) {
-  ImGui::PushStyleColor(ImGuiCol_ChildBg, kSidebar);
+  (void)kSidebar;  // the menu column has no panel of its own now
+  ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, S(app, 19.0f, 23.0f));
   ImGui::BeginChild("launcher-sidebar", ImVec2(S(app, 232.0f), 0.0f), ImGuiChildFlags_AlwaysUseWindowPadding,
                     ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
@@ -4063,20 +4092,27 @@ void RefreshLogsText(AppState& app) {
 // ---- CATONIX home screen: plain text menu drawn straight over the artwork ----
 bool HomeMenuItem(const AppState& app, const char* label, ImFont* font, float font_px, ImVec2 pos,
                   bool enabled) {
+  // A button plate in the launcher's colours: dark glass, red edge, solid red while pressed.
   const ImVec2 text_size = font->CalcTextSizeA(font_px, FLT_MAX, 0.0f, label);
   const float pad = S(app, 8.0f);
+  const float plate_w = std::max(text_size.x + pad * 5.0f, font_px * 8.6f);
+  const float plate_h = text_size.y + pad * 1.2f;
   ImGui::SetCursorPos(pos);
   const ImVec2 origin = ImGui::GetCursorScreenPos();
   ImGui::PushID(label);
-  const bool pressed =
-      ImGui::InvisibleButton("##home-item", ImVec2(text_size.x + pad * 2.0f, text_size.y + pad));
+  const bool pressed = ImGui::InvisibleButton("##home-item", ImVec2(plate_w, plate_h));
   const bool hot = enabled && (ImGui::IsItemHovered() || ImGui::IsItemActive());
   ImGui::PopID();
-  const ImU32 color = !enabled ? IM_COL32(170, 170, 170, 110)
-                      : hot    ? ImGui::ColorConvertFloat4ToU32(kAccent)
-                               : IM_COL32(245, 245, 245, 255);
   ImDrawList* draw = ImGui::GetWindowDrawList();
-  const ImVec2 text_pos(origin.x + pad, origin.y + pad * 0.5f);
+  const ImVec2 plate_max(origin.x + plate_w, origin.y + plate_h);
+  const float rounding = S(app, 6.0f);
+  const ImU32 accent = ImGui::ColorConvertFloat4ToU32(kAccent);
+  draw->AddRectFilled(origin, plate_max, hot ? accent : IM_COL32(8, 9, 12, enabled ? 170 : 105), rounding);
+  draw->AddRect(origin, plate_max, IM_COL32(255, 255, 255, hot ? 130 : 48), rounding, 0, S(app, 1.5f));
+  draw->AddRectFilled(origin, ImVec2(origin.x + S(app, 6.0f), plate_max.y),
+                      enabled ? accent : IM_COL32(120, 120, 120, 150), rounding, ImDrawFlags_RoundCornersLeft);
+  const ImU32 color = !enabled ? IM_COL32(170, 170, 170, 130) : IM_COL32(248, 248, 248, 255);
+  const ImVec2 text_pos(origin.x + pad * 2.4f, origin.y + (plate_h - text_size.y) * 0.5f);
   draw->AddText(font, font_px, ImVec2(text_pos.x + 2.0f, text_pos.y + 2.0f), IM_COL32(0, 0, 0, 190), label);
   draw->AddText(font, font_px, text_pos, color, label);
   return pressed && enabled;
@@ -4170,6 +4206,10 @@ void DrawHome(AppState& app) {
       app.tab = Tab::GameFiles;
       app.show_home = false;
     }
+    if (HomeMenuItem(app, "CREDITS", menu_font, menu_px, place(), true)) {
+      app.tab = Tab::Credits;
+      app.show_home = false;
+    }
     if (HomeMenuItem(app, "ADD TU / DLC", menu_font, menu_px, place(), !busy)) {
       static const SDL_DialogFileFilter filters[]{{"Updates and packs", "*"}};
       RequestDialog(app, DialogKind::Package, filters, 1, true);
@@ -4197,8 +4237,22 @@ void DrawHome(AppState& app) {
       credit_y += px * 1.3f;
     };
     right_text(app.fonts.oswald_semibold, credit_px, "CREDITS", IM_COL32(255, 255, 255, 240));
+    const float catonix_y = credit_y;
     right_text(app.fonts.barlow_medium, small_px, "PORT BY: CATONIX", IM_COL32(225, 225, 225, 235));
+    const float site_y = credit_y;
     right_text(app.fonts.barlow_medium, small_px, "SITE: VOLVISIONMODS.COM", IM_COL32(225, 225, 225, 235));
+    // Both lines open their link when tapped.
+    auto credit_link = [&](const char* id, float y, const char* text, const char* url) {
+      const float width = app.fonts.barlow_medium->CalcTextSizeA(small_px, FLT_MAX, 0.0f, text).x;
+      draw->AddLine(ImVec2(right - width, y + small_px * 1.12f), ImVec2(right, y + small_px * 1.12f),
+                    IM_COL32(225, 225, 225, 190), 1.5f);
+      ImGui::SetCursorScreenPos(ImVec2(right - width - S(app, 10.0f), y - S(app, 5.0f)));
+      if (ImGui::InvisibleButton(id, ImVec2(width + S(app, 20.0f), small_px * 1.3f + S(app, 6.0f)))) {
+        if (!SDL_OpenURL(url)) SetBanner(app, "The link could not be opened.");
+      }
+    };
+    credit_link("##credit-channel", catonix_y, "PORT BY: CATONIX", "https://youtube.com/@catonix-ru7");
+    credit_link("##credit-site", site_y, "SITE: VOLVISIONMODS.COM", "http://volvisionmods.com");
   }
 
   // Bottom left: progress while a job runs, otherwise the banner and game-file status.
@@ -4297,6 +4351,53 @@ void DrawHome(AppState& app) {
   ImGui::PopStyleVar(2);
 }
 
+void DrawCredits(AppState& app) {
+  constexpr char kChannelUrl[] = "https://youtube.com/@catonix-ru7";
+  constexpr char kWebsiteUrl[] = "http://volvisionmods.com";
+  if (!app.avatar_tried) {
+    app.avatar_tried = true;
+    app.tex_avatar = LoadEmbeddedTexture(app.renderer, kAvatarPng, kAvatarPngSize);
+  }
+  if (BeginPanel(app, "credits-panel", ImVec2(0.0f, S(app, 330.0f)))) {
+    // Profile card: channel picture on the left, name and links beside it.
+    const float avatar = S(app, 150.0f);
+    const ImVec2 start = ImGui::GetCursorPos();
+    const ImVec2 origin = ImGui::GetCursorScreenPos();
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const ImVec2 a0(origin.x + S(app, 10.0f), origin.y + S(app, 10.0f));
+    const ImVec2 center(a0.x + avatar * 0.5f, a0.y + avatar * 0.5f);
+    if (app.tex_avatar) {
+      draw->AddImage(static_cast<ImTextureID>(reinterpret_cast<intptr_t>(app.tex_avatar)), a0,
+                     ImVec2(a0.x + avatar, a0.y + avatar));
+    } else {
+      draw->AddCircleFilled(center, avatar * 0.5f, ImGui::ColorConvertFloat4ToU32(kAccent), 64);
+    }
+    draw->AddCircle(center, avatar * 0.5f + S(app, 3.0f), IM_COL32(255, 255, 255, 210), 64, S(app, 2.0f));
+
+    const float text_x = start.x + S(app, 10.0f) + avatar + S(app, 30.0f);
+    ImGui::SetCursorPos(ImVec2(text_x, start.y + S(app, 14.0f)));
+    ImGui::PushFont(app.fonts.oswald_bold);
+    ImGui::TextColored(kText, "CATONIX");
+    ImGui::PopFont();
+    ImGui::SetCursorPosX(text_x);
+    ImGui::TextColored(kSecondary, "Port of WWE '13 to Android");
+    ImGui::SetCursorPosX(text_x);
+    ImGui::TextColored(kMuted, "YouTube  %s", kChannelUrl);
+    ImGui::SetCursorPosX(text_x);
+    ImGui::TextColored(kMuted, "Website  %s", kWebsiteUrl);
+
+    ImGui::SetCursorPos(ImVec2(start.x + S(app, 10.0f), start.y + avatar + S(app, 42.0f)));
+    if (AccentButton(app, "Open YouTube Channel", S(app, 290.0f, 56.0f))) {
+      if (!SDL_OpenURL(kChannelUrl)) SetBanner(app, "The link could not be opened.");
+    }
+    ImGui::SameLine(0.0f, S(app, 16.0f));
+    if (AccentButton(app, "Open Website", S(app, 240.0f, 56.0f))) {
+      if (!SDL_OpenURL(kWebsiteUrl)) SetBanner(app, "The link could not be opened.");
+    }
+  }
+  EndPanel();
+}
+
 void DrawMain(AppState& app) {
   if (app.show_home) {
     DrawHome(app);
@@ -4307,14 +4408,34 @@ void DrawMain(AppState& app) {
   ImGui::Begin("WWE '13 PC Recompiled", nullptr,
                ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
                    ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus);
+  {
+    // launcher-bg-cover: the home artwork behind every page, dimmed so text stays readable.
+    if (!app.tex_tried) {
+      app.tex_tried = true;
+      app.tex_bg = LoadEmbeddedTexture(app.renderer, kBgPng, kBgPngSize);
+      app.tex_logo = LoadEmbeddedTexture(app.renderer, kLogoPng, kLogoPngSize);
+    }
+    const ImVec2 bg_size = ImGui::GetIO().DisplaySize;
+    ImDrawList* bg_draw = ImGui::GetWindowDrawList();
+    if (app.tex_bg) {
+      float bg_tw = 1280.0f, bg_th = 720.0f;
+      SDL_GetTextureSize(app.tex_bg, &bg_tw, &bg_th);
+      const float bg_scale = std::max(bg_size.x / bg_tw, bg_size.y / bg_th);
+      const ImVec2 bg_ds(bg_tw * bg_scale, bg_th * bg_scale);
+      const ImVec2 bg_p((bg_size.x - bg_ds.x) * 0.5f, (bg_size.y - bg_ds.y) * 0.5f);
+      bg_draw->AddImage(static_cast<ImTextureID>(reinterpret_cast<intptr_t>(app.tex_bg)), bg_p,
+                        ImVec2(bg_p.x + bg_ds.x, bg_p.y + bg_ds.y));
+    }
+    bg_draw->AddRectFilled(ImVec2(0, 0), bg_size, IM_COL32(6, 7, 10, 178));
+  }
   DrawSidebar(app);
   ImGui::SameLine(0.0f, 0.0f);
-  ImGui::PushStyleColor(ImGuiCol_ChildBg, kWindow);
+  ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, S(app, 30.0f, 24.0f));
   ImGui::BeginChild("launcher-content", ImVec2(0.0f, 0.0f), ImGuiChildFlags_AlwaysUseWindowPadding,
                     ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
   ImGui::PushFont(app.fonts.oswald_semibold);
-   static const std::array<const char*, 5> page_titles{{"PLAY", "SETTINGS", "CONTROLS", "CONTENT", "GAME FILES"}};
+   static const std::array<const char*, 6> page_titles{{"PLAY", "SETTINGS", "CONTROLS", "CONTENT", "GAME FILES", "CREDITS"}};
   ImGui::TextColored(kText, "%s", page_titles[static_cast<size_t>(app.tab)]);
   ImGui::PopFont();
   ImGui::Spacing();
@@ -4328,6 +4449,7 @@ void DrawMain(AppState& app) {
   if (app.tab != Tab::Controls) app.capture_index = -1;  // leaving the page cancels a pending key capture
   switch (app.tab) {
     case Tab::Play: DrawPlay(app); break;
+    case Tab::Credits: DrawCredits(app); break;
     case Tab::Settings: DrawSettings(app); break;
     case Tab::Controls: DrawControls(app); break;
     case Tab::Content: DrawContent(app); break;
@@ -4342,12 +4464,14 @@ void DrawMain(AppState& app) {
   ImGui::End();
   {
     const ImVec2 display = ImGui::GetIO().DisplaySize;
-    ImGui::SetNextWindowPos(ImVec2(display.x - S(app, 130.0f), S(app, 8.0f)));
-    ImGui::SetNextWindowSize(ImVec2(S(app, 120.0f), S(app, 44.0f)));
+    ImGui::SetNextWindowPos(ImVec2(display.x - S(app, 214.0f), S(app, 6.0f)));
+    ImGui::SetNextWindowSize(ImVec2(S(app, 206.0f), S(app, 66.0f)));
     ImGui::Begin("home-back", nullptr,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove |
                      ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar);
-    if (ImGui::Button("Home", ImVec2(S(app, 110.0f), S(app, 36.0f)))) app.show_home = true;
+    ImGui::PushFont(app.fonts.oswald_medium);
+    if (ImGui::Button("Home", ImVec2(S(app, 190.0f), S(app, 54.0f)))) app.show_home = true;
+    ImGui::PopFont();
     ImGui::End();
   }
 }
@@ -4760,7 +4884,7 @@ bool Initialize(AppState& app, int argc, char** argv) {
   ImGui::StyleColorsDark();
   ImGuiStyle& style = ImGui::GetStyle();
   style.Colors[ImGuiCol_WindowBg] = kWindow;
-  style.Colors[ImGuiCol_ChildBg] = kWindow;
+  style.Colors[ImGuiCol_ChildBg] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
   style.Colors[ImGuiCol_Text] = kText;
   style.Colors[ImGuiCol_TextDisabled] = kMuted;
   style.Colors[ImGuiCol_Border] = kBorder;
