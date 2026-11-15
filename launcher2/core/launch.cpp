@@ -272,6 +272,7 @@ LaunchPlan BuildLaunchPlan(const Paths& paths, const Settings& settings,
 #if defined(__ANDROID__)
   plan.arguments.emplace_back("--vulkan_upload_hoist=2");  // hoist small safe uploads out of the render pass (test)
   plan.arguments.emplace_back("--vulkan_rt_fast_path_clip_disable=true");  // test: fast RT update for clip-disabled draws
+  plan.arguments.emplace_back("--vulkan_eager_resolved_texture_load=true");  // test: reload resolved textures between passes
 #endif
 
   plan.environment = {
