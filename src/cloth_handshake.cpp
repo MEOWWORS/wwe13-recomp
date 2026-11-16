@@ -49,7 +49,7 @@
 
 #include <rex/logging.h>
 #include <rex/ppc/context.h>
-#include <rex/ppc/memory.h>
+#include "rex_compat.h"
 
 namespace {
 // Guest addresses from generated/wwe13_recomp.22.cpp (this tree):

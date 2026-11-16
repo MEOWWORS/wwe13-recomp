@@ -17,7 +17,7 @@
 
 #include <rex/logging.h>
 #include <rex/ppc/context.h>
-#include <rex/ppc/memory.h>
+#include "rex_compat.h"
 
 namespace {
 bool ForceInterval1() {

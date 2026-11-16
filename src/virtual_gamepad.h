@@ -10,6 +10,9 @@
 #include <rex/ui/imgui_dialog.h>
 #include <rex/ui/immediate_drawer.h>
 #include <rex/ui/window_listener.h>
+#include <rex/input/device.h>
+
+#include <vector>
 
 #include "touch_layout.h"
 
@@ -50,17 +53,18 @@ class VirtualGamepadInputDriver final
   ~VirtualGamepadInputDriver() override;
 
   rex::X_STATUS Setup() override;
-  rex::X_RESULT GetCapabilities(
-      uint32_t user_index, uint32_t flags,
+  void EnumerateDevices(std::vector<rex::input::DeviceInfo>& out) override;
+  rex::X_RESULT GetDeviceCapabilities(
+      rex::input::DeviceId device, uint32_t flags,
       rex::input::X_INPUT_CAPABILITIES* out_caps) override;
-  rex::X_RESULT GetState(
-      uint32_t user_index,
+  rex::X_RESULT GetDeviceState(
+      rex::input::DeviceId device,
       rex::input::X_INPUT_STATE* out_state) override;
-  rex::X_RESULT SetState(
-      uint32_t user_index,
+  rex::X_RESULT SetDeviceVibration(
+      rex::input::DeviceId device,
       rex::input::X_INPUT_VIBRATION* vibration) override;
-  rex::X_RESULT GetKeystroke(
-      uint32_t user_index, uint32_t flags,
+  rex::X_RESULT GetDeviceKeystroke(
+      rex::input::DeviceId device, uint32_t flags,
       rex::input::X_INPUT_KEYSTROKE* out_keystroke) override;
 
   void OnWindowAvailable(rex::ui::Window* window) override;

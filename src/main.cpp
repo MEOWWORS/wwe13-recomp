@@ -2,8 +2,8 @@
 //
 // This file is yours to edit. 'rexglue migrate' will NOT overwrite it.
 
-#include "generated/wwe13_config.h"
-#include "generated/wwe13_init.h"
+#include "generated/default/wwe13_pch.h"
+#include "generated/default/wwe13_init.h"
 
 #include "wwe13_app.h"
 

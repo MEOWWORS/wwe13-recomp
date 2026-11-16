@@ -1,6 +1,7 @@
 // Diagnostic (WWE13_XMP_AUDIO_PROBE=1): samples the title's XMP-notification handler and the
 // audio-engine mute/restore routines it calls. Default off.
 #include <atomic>
+#include "rex_compat.h"
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>

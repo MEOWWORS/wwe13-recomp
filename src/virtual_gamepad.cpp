@@ -158,13 +158,25 @@ VirtualGamepadInputDriver::~VirtualGamepadInputDriver() {
   ReleaseAllTouches();
 }
 
+// The 2K14 SDK asks each driver for its devices: the touch controls are one pad.
+constexpr rex::input::DeviceId kTouchPad{1};
+
+void VirtualGamepadInputDriver::EnumerateDevices(std::vector<rex::input::DeviceInfo>& out) {
+  rex::input::DeviceInfo info;
+  info.id = kTouchPad;
+  info.name = "Touch controls";
+  info.guid = "wwe13-touch";
+  out.push_back(std::move(info));
+}
+
 rex::X_STATUS VirtualGamepadInputDriver::Setup() {
   return static_cast<rex::X_STATUS>(0);
 }
 
-rex::X_RESULT VirtualGamepadInputDriver::GetCapabilities(
-    uint32_t user_index, uint32_t flags,
+rex::X_RESULT VirtualGamepadInputDriver::GetDeviceCapabilities(
+    rex::input::DeviceId device, uint32_t flags,
     rex::input::X_INPUT_CAPABILITIES* out_caps) {
+  const uint32_t user_index = device == kTouchPad ? 0u : 1u;
   (void)flags;
   if (user_index != 0 || !PadActive(*state_)) {
     return static_cast<rex::X_RESULT>(0x0000048F);
@@ -186,8 +198,9 @@ rex::X_RESULT VirtualGamepadInputDriver::GetCapabilities(
   return static_cast<rex::X_RESULT>(0);
 }
 
-rex::X_RESULT VirtualGamepadInputDriver::GetState(
-    uint32_t user_index, rex::input::X_INPUT_STATE* out_state) {
+rex::X_RESULT VirtualGamepadInputDriver::GetDeviceState(
+    rex::input::DeviceId device, rex::input::X_INPUT_STATE* out_state) {
+  const uint32_t user_index = device == kTouchPad ? 0u : 1u;
   if (user_index != 0 || !PadActive(*state_)) {
     return static_cast<rex::X_RESULT>(0x0000048F);
   }
@@ -208,19 +221,21 @@ rex::X_RESULT VirtualGamepadInputDriver::GetState(
   return static_cast<rex::X_RESULT>(0);
 }
 
-rex::X_RESULT VirtualGamepadInputDriver::SetState(
-    uint32_t user_index, rex::input::X_INPUT_VIBRATION* vibration) {
+rex::X_RESULT VirtualGamepadInputDriver::SetDeviceVibration(
+    rex::input::DeviceId device, rex::input::X_INPUT_VIBRATION* vibration) {
+  const uint32_t user_index = device == kTouchPad ? 0u : 1u;
   (void)vibration;
   return user_index == 0 && PadActive(*state_)
              ? static_cast<rex::X_RESULT>(0)
              : static_cast<rex::X_RESULT>(0x0000048F);
 }
 
-rex::X_RESULT VirtualGamepadInputDriver::GetKeystroke(
-    uint32_t user_index, uint32_t flags,
+rex::X_RESULT VirtualGamepadInputDriver::GetDeviceKeystroke(
+    rex::input::DeviceId device, uint32_t flags,
     rex::input::X_INPUT_KEYSTROKE* out_keystroke) {
   (void)flags;
   (void)out_keystroke;
+  const uint32_t user_index = device == kTouchPad ? 0u : 1u;
   return user_index == 0 && PadActive(*state_)
              ? static_cast<rex::X_RESULT>(0x000010D2)
              : static_cast<rex::X_RESULT>(0x0000048F);

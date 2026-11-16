@@ -232,7 +232,7 @@ LaunchPlan BuildLaunchPlan(const Paths& paths, const Settings& settings,
 
   const fs::path game_folder = effective.game_folder.empty() ? paths.default_game_folder
                                                               : effective.game_folder;
-  plan.arguments.push_back(internal::PathToUtf8(game_folder));
+  plan.arguments.push_back("--game_data_root=" + internal::PathToUtf8(game_folder));  // 2K14 SDK (v0.10)
   const bool fullscreen = effective.display != DisplayMode::kWindowed;
   const fs::path log_file = paths.logs_dir /
       ("wwe13-" + internal::LocalTimestamp(std::chrono::system_clock::now(), "%Y%m%d-%H%M%S") + ".log");

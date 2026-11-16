@@ -96,13 +96,13 @@ rexglue_setup_target(${WWE13_TARGET})
 
 if(ANDROID)
   find_package(SDL3 CONFIG REQUIRED)
-  if(NOT TARGET SDL3::SDL3-shared)
-    message(FATAL_ERROR "Installed SDK does not export SDL3::SDL3-shared")
+  if(NOT TARGET SDL3::Headers)
+    message(FATAL_ERROR "Installed SDK does not export SDL3::Headers")
   endif()
 
   set(WWE13_LAUNCHER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/launcher2")
   set(WWE13_IMGUI_SOURCE
-      "${CMAKE_CURRENT_SOURCE_DIR}/../tools/rexglue/thirdparty/imgui")
+      "${CMAKE_CURRENT_SOURCE_DIR}/../k14/thirdparty/imgui")
 
   add_library(wwe13_launcher_imgui STATIC
     "${WWE13_IMGUI_SOURCE}/imgui.cpp"
@@ -116,7 +116,7 @@ if(ANDROID)
     "${WWE13_IMGUI_SOURCE}"
     "${WWE13_IMGUI_SOURCE}/backends"
   )
-  target_link_libraries(wwe13_launcher_imgui PUBLIC SDL3::SDL3-shared)
+  target_link_libraries(wwe13_launcher_imgui PUBLIC SDL3::Headers)  # SDL itself: librexruntime.so
 
   add_subdirectory("${WWE13_LAUNCHER_DIR}/core"
                    "${CMAKE_CURRENT_BINARY_DIR}/launcher-core")

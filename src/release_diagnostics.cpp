@@ -43,11 +43,11 @@
 #include <ucontext.h>
 #endif
 
-REXCVAR_DECLARE(std::int32_t, resolution_scale);
+REXCVAR_DEFINE_INT32(resolution_scale, 1, "GPU", "WWE13: logged only (not in the 2K14 SDK)");
 REXCVAR_DECLARE(bool, fullscreen);
-REXCVAR_DECLARE(bool, debug_ui);
+REXCVAR_DEFINE_BOOL(debug_ui, false, "UI/Debug", "WWE13: debug overlays (not in the 2K14 SDK)");
 REXCVAR_DECLARE(std::int32_t, vulkan_device);
-REXCVAR_DECLARE(std::string, vulkan_device_id);
+REXCVAR_DEFINE_STRING(vulkan_device_id, "", "UI/Vulkan", "WWE13: logged only (not in the 2K14 SDK)");
 REXCVAR_DECLARE(std::string, log_file);
 
 namespace wwe13 {

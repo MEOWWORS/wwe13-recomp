@@ -19,7 +19,7 @@
 #include <unistd.h>
 #endif
 
-#include <rex/ppc/memory.h>
+#include "rex_compat.h"
 #include <rex/system/thread_state.h>
 
 namespace {

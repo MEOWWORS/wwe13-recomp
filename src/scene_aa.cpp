@@ -1,6 +1,7 @@
 // Optional cap on the game's own scene-AA enqueue; unset/invalid preserves the game choice.
 
 #include "scene_aa.h"
+#include "rex_compat.h"
 
 #include <algorithm>
 #include <atomic>

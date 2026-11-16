@@ -14,7 +14,7 @@
 
 #include <rex/graphics/command_processor.h>
 #include <rex/graphics/graphics_system.h>
-#include <rex/ppc/memory.h>
+#include "rex_compat.h"
 #include <rex/runtime.h>
 #include <rex/system/kernel_state.h>
 
@@ -40,6 +40,8 @@ void wwe13_untile_coherency(PPCRegister& source, PPCRegister& width, PPCRegister
                              kernel_state->emulator()->graphics_system())
                        : nullptr;
   if (graphics && graphics->command_processor()) {
-    graphics->command_processor()->MakeGpuWritesVisibleToCpu(source.u32, uint32_t(size));
+    // 2K14 SDK: no GPU->CPU readback helper yet (to port: retro wrestler textures can render black).
+    (void)source;
+    (void)size;
   }
 }

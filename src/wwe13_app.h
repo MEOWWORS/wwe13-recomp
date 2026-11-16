@@ -64,7 +64,7 @@ class Wwe13App : public rex::ReXApp {
         PPCImageConfig));
   }
 
-  std::string_view GetWindowTitle() const override { return "WWE 13"; }
+  std::string_view GetWindowTitle() const { return "WWE 13"; }
 
   void OnConfigurePaths(rex::PathConfig& paths) override {
     game_data_root_ = paths.game_data_root;
@@ -176,7 +176,7 @@ class Wwe13App : public rex::ReXApp {
     }
     frame_history_ = std::make_shared<Wwe13FrameHistory>();
     frame_time_sink_ = std::make_shared<FrameTimeSink>(frame_history_);
-    rex::AddSink(rex::log::GPU, frame_time_sink_);
+    rex::AddSink(rex::log::gpu(), frame_time_sink_);
   }
 
   void OnCreateDialogs(rex::ui::ImGuiDrawer* drawer) override {
@@ -250,7 +250,7 @@ class Wwe13App : public rex::ReXApp {
     std::exit(EXIT_FAILURE);
   }
 
-  void OnGraphicsSetupFailed(rex::X_STATUS status) override {
+  void OnGraphicsSetupFailed(rex::X_STATUS status) {
     (void)status;
     constexpr char kNoGpuMessage[] =
         "WWE '13 couldn't find a graphics card it can use. Update your graphics driver, then try "
@@ -300,7 +300,7 @@ class Wwe13App : public rex::ReXApp {
     rex::ui::UnregisterBind("bind_toggle_fullscreen");
     perf_overlay_.reset();
     if (frame_time_sink_) {
-      rex::RemoveSink(rex::log::GPU, frame_time_sink_);
+      rex::RemoveSink(rex::log::gpu(), frame_time_sink_);
       frame_time_sink_.reset();
     }
     frame_history_.reset();

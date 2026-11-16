@@ -2,6 +2,7 @@
 // Kill switch: WWE13_KEYBOARD_TYPING=0.
 
 #include <atomic>
+#include "rex_compat.h"
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -235,7 +236,9 @@ void RegisterTextEntryTarget(rex::system::KernelState* kernel_state) {
   auto* const input_system =
       dynamic_cast<rex::input::InputSystem*>(runtime->input_system());
   if (input_system) {
-    input_system->SetTextEntryTarget(&g_text_entry_target);
+    // 2K14 SDK: no PC keyboard text entry hook (Android has no PC keyboard here).
+    (void)input_system;
+    (void)g_text_entry_target;
   }
 }
 

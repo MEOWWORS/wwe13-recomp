@@ -19,7 +19,7 @@
 
 #include <rex/logging.h>
 #include <rex/ppc/context.h>
-#include <rex/ppc/memory.h>
+#include "rex_compat.h"
 
 namespace wwe13 {
 bool GetCustomSceneSize(uint32_t* width, uint32_t* height);
