@@ -78,10 +78,11 @@ set(WWE13_SOURCES
   src/xmp_audio_probe.cpp
   src/shader_cache_seed.cpp
   src/arena_crowd.cpp
-  src/svrfmt/pac.cpp)
+  src/svrfmt/pac.cpp
+  src/cpu_cores.cpp)
 
 if(ANDROID)
-  list(APPEND WWE13_SOURCES src/virtual_gamepad.cpp)
+  list(APPEND WWE13_SOURCES src/virtual_gamepad.cpp src/touch_layout.cpp)
   add_library(main SHARED ${WWE13_SOURCES})
   target_compile_definitions(main PRIVATE REX_ANDROID_APP_ID="wwe13")
   set(WWE13_TARGET main)

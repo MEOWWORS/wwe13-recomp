@@ -46,12 +46,13 @@ struct Paths {
 Paths ResolvePaths(const fs::path& launcher_executable);
 
 // ---------------------------------------------------------------------------------------------- settings
-enum class Resolution { k480p, k576p, k720p, k1080p, k1440p };
+enum class Resolution { k480p, k576p, k720p, k1080p, k1440p, k900p };
 enum class FrameRate { kClassic, kKeep60, kLock30 };
 enum class AntiAliasing { kOriginal4x, kFaster2x };
 enum class DisplayMode { kFullscreen, kWindowed };
 enum class TouchControls { kAndroid, kXbox360, kNone };
 enum class ArenaCrowd { kFull, kHalf, kOff };
+enum class GpuProfile { kAuto, kAdreno, kMali, kOther };  // Mali: Vulkan settings Mali drivers need
 
 struct Settings {
   Resolution resolution = Resolution::k720p;
@@ -60,6 +61,12 @@ struct Settings {
   DisplayMode display = DisplayMode::kFullscreen;
   TouchControls touch_controls = TouchControls::kAndroid;  // on-screen buttons (Android builds)
   ArenaCrowd arena_crowd = ArenaCrowd::kFull;  // people in the arena seats (fewer = less GPU work)
+  GpuProfile gpu_profile = GpuProfile::kAuto;  // Auto: Mali settings only on a Mali GPU
+  bool vsync = false;            // Android: wait for the display (FIFO) instead of mailbox presentation
+  bool fast_cpu_cores = false;   // Android: keep the game's threads on the fastest CPU cores
+  int touch_size = 100;          // on-screen buttons, percent (60-150)
+  int touch_opacity = 46;        // on-screen buttons, percent (15-100)
+  std::string extra_arguments;   // extra --option=value arguments for the game, separated by spaces
   std::string gpu_id;    // stable id of the chosen Vulkan device ("" = recommended)
   fs::path game_folder;  // folder holding default.xex + default.xexp
   bool auto_start = false;          // "Start straight away next time" (hold Shift at start to come back)
@@ -90,6 +97,8 @@ struct Recommendation {
   std::string reason;
 };
 Recommendation RecommendedSettings(const std::vector<GpuInfo>& gpus);
+// True when the Mali settings apply: GPU profile Mali, or Auto on an Arm Mali GPU.
+bool UsesMaliProfile(const Settings& settings, const std::vector<GpuInfo>& gpus);
 
 // ---------------------------------------------------------------------------------------------- game files (F1)
 enum class FileState { kMissing, kFound, kWrongVersion, kCorrupt };

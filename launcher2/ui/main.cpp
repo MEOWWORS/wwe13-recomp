@@ -14,6 +14,7 @@
 #include "launcher_version.h"
 #include "native_keys.h"
 #include "update.h"
+#include "../../src/touch_layout.h"
 
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -96,6 +97,12 @@ constexpr char kNoVulkanMessage[] =
 
 enum class Tab { Play, Settings, Controls, Content, GameFiles, Credits, Guide };
 enum class ContentCategory { Superstars, Entrances, Arenas, Logos, Videos, Music, SaveData };
+#ifdef __ANDROID__
+constexpr const char* kDiscImagePattern = "*";
+#else
+constexpr const char* kDiscImagePattern = "iso;img";
+#endif
+
 enum class DialogKind { None, Music, DiscImage, Package, GameFolder, Backup, CreationFiles, CreationFolder, FullSave, Video };
 
 struct JobOutcome {
@@ -160,6 +167,14 @@ struct AppState {
   int logs_export_state = 0;
   std::string logs_export_message;
   SDL_Texture* tex_bg = nullptr;
+  // Touch layout editor (Controls page).
+  bool touch_editor = false;
+  bool editor_android = true;
+  std::vector<wwe13::touch::Item> editor_items;
+  int editor_drag = -1;
+  ImVec2 editor_grab;
+  SDL_Texture* tex_controls = nullptr;
+  bool controls_tried = false;
   SDL_Texture* tex_logo = nullptr;
   SDL_Texture* tex_avatar = nullptr;
   bool avatar_tried = false;
@@ -316,8 +331,12 @@ bool LauncherAllows576p() {
 }
 
 bool ResolutionHidden(Resolution resolution) {
-  return (resolution == Resolution::k1080p && !LauncherAllows1080p()) ||
+#ifdef __ANDROID__
+  return resolution == Resolution::k576p || resolution == Resolution::k1440p;
+#else
+  return resolution == Resolution::k900p || (resolution == Resolution::k1080p && !LauncherAllows1080p()) ||
          (resolution == Resolution::k576p && !LauncherAllows576p());
+#endif
 }
 
 fs::path LauncherExecutablePath() {
@@ -1876,6 +1895,7 @@ std::string ResolutionName(Resolution value) {
     case Resolution::k720p: return "720p";
     case Resolution::k1080p: return "1080p";
     case Resolution::k1440p: return "1440p";
+    case Resolution::k900p: return "900p";
   }
   return "720p";
 }
@@ -2383,6 +2403,9 @@ void DrawPlay(AppState& app) {
   ImGui::EndChild();
 }
 
+// Set while a slider or text box on the page is held, so dragging it does not scroll the page.
+bool g_page_drag_blocked = false;
+
 void DrawSegment(const AppState& app, const char* label, bool selected, float width,
                  const std::function<void()>& action) {
   ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, S(app, 7.0f));
@@ -2449,9 +2472,9 @@ void DrawSettings(AppState& app) {
     if (BeginPanel(app, "settings-resolution", ImVec2(card_width, S(app, compact ? 166.0f : 186.0f)))) {
       DrawPanelHeading(app, "RESOLUTION", "Choose a clear picture that feels right for your PC.");
       ImGui::Spacing();
-      const std::array<std::pair<Resolution, const char*>, 5> choices{{
+      const std::array<std::pair<Resolution, const char*>, 6> choices{{
           {Resolution::k480p, "480p"}, {Resolution::k576p, "576p"},
-          {Resolution::k720p, "720p"}, {Resolution::k1080p, "1080p"},
+          {Resolution::k720p, "720p"}, {Resolution::k900p, "900p"}, {Resolution::k1080p, "1080p"},
           {Resolution::k1440p, "1440p"},
       }};
       const size_t visible_choices = static_cast<size_t>(std::count_if(
@@ -2473,6 +2496,7 @@ void DrawSettings(AppState& app) {
       const char* hint = current.resolution == Resolution::k480p ? "Fastest - handhelds and integrated graphics"
                           : current.resolution == Resolution::k576p ? "Faster"
                           : current.resolution == Resolution::k720p ? "The original Xbox 360 sharpness"
+                          : current.resolution == Resolution::k900p ? "Sharper - strong phones (test)"
                           : current.resolution == Resolution::k1080p ? "Sharp - mid-range graphics cards"
                                                                     : "Sharp - strong graphics cards";
       DrawTextDisabled(app, hint);
@@ -2570,6 +2594,107 @@ void DrawSettings(AppState& app) {
     });
     DrawTextDisabled(app, crowd == ArenaCrowd::kFull ? "Every seat filled, as on the Xbox 360"
                           : crowd == ArenaCrowd::kHalf ? "About half the people" : "Empty seats: the fastest");
+  }
+  EndPanel();
+
+  // ---- PERFORMANCE: one-tap presets and the phone options ----
+  ImGui::Spacing();
+  if (BeginPanel(app, "settings-performance", ImVec2(0.0f, S(app, 420.0f)))) {
+    DrawPanelHeading(app, "PERFORMANCE", "Presets set resolution, anti-aliasing, frame rate and crowd in one tap.");
+    ImGui::Spacing();
+    const float label_w = S(app, 150.0f);
+    auto row = [label_w](const char* label, int count) {
+      ImGui::AlignTextToFramePadding();
+      ImGui::TextColored(kText, "%s", label);
+      ImGui::SameLine(label_w);
+      return (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x * float(count - 1)) / float(count);
+    };
+    auto preset = [&app](Resolution resolution, AntiAliasing aa, FrameRate frame_rate, ArenaCrowd crowd) {
+      KeepManualSettings(app);
+      app.settings.resolution = resolution;
+      app.settings.anti_aliasing = aa;
+      app.settings.frame_rate = frame_rate;
+      app.settings.arena_crowd = crowd;
+      SaveSettings(app);
+    };
+    auto is_preset = [&](Resolution resolution, AntiAliasing aa, FrameRate frame_rate, ArenaCrowd crowd) {
+      return current.resolution == resolution && current.anti_aliasing == aa && current.frame_rate == frame_rate &&
+             app.settings.arena_crowd == crowd;
+    };
+    float w = row("MODE", 3);
+    DrawSegment(app, "Quality", is_preset(Resolution::k720p, AntiAliasing::kOriginal4x, FrameRate::kClassic, ArenaCrowd::kFull), w,
+                [preset] { preset(Resolution::k720p, AntiAliasing::kOriginal4x, FrameRate::kClassic, ArenaCrowd::kFull); });
+    ImGui::SameLine();
+    DrawSegment(app, "Balanced", is_preset(Resolution::k720p, AntiAliasing::kFaster2x, FrameRate::kClassic, ArenaCrowd::kHalf), w,
+                [preset] { preset(Resolution::k720p, AntiAliasing::kFaster2x, FrameRate::kClassic, ArenaCrowd::kHalf); });
+    ImGui::SameLine();
+    DrawSegment(app, "Performance", is_preset(Resolution::k480p, AntiAliasing::kFaster2x, FrameRate::kLock30, ArenaCrowd::kOff), w,
+                [preset] { preset(Resolution::k480p, AntiAliasing::kFaster2x, FrameRate::kLock30, ArenaCrowd::kOff); });
+
+    w = row("GPU PROFILE", 4);
+    const std::array<std::pair<GpuProfile, const char*>, 4> profiles{{
+        {GpuProfile::kAuto, "Auto"}, {GpuProfile::kAdreno, "Adreno"}, {GpuProfile::kMali, "Mali"}, {GpuProfile::kOther, "Other"}}};
+    for (size_t i = 0; i < profiles.size(); ++i) {
+      if (i) ImGui::SameLine();
+      DrawSegment(app, profiles[i].second, app.settings.gpu_profile == profiles[i].first, w, [&app, value = profiles[i].first] {
+        app.settings.gpu_profile = value;
+        SaveSettings(app);
+      });
+    }
+
+    w = row("SCREEN SHAPE", 2);
+    DrawSegment(app, "16:9 (bars)", !app.settings.stretch_to_fill, w, [&app] {
+      app.settings.stretch_to_fill = false;
+      SaveSettings(app);
+    });
+    ImGui::SameLine();
+    DrawSegment(app, "Fill screen", app.settings.stretch_to_fill, w, [&app] {
+      app.settings.stretch_to_fill = true;
+      SaveSettings(app);
+    });
+
+    w = row("VSYNC", 2);
+    DrawSegment(app, "Off", !app.settings.vsync, w, [&app] {
+      app.settings.vsync = false;
+      SaveSettings(app);
+    });
+    ImGui::SameLine();
+    DrawSegment(app, "On (no tearing)", app.settings.vsync, w, [&app] {
+      app.settings.vsync = true;
+      SaveSettings(app);
+    });
+
+    w = row("FAST CPU CORES", 2);
+    DrawSegment(app, "Off", !app.settings.fast_cpu_cores, w, [&app] {
+      app.settings.fast_cpu_cores = false;
+      SaveSettings(app);
+    });
+    ImGui::SameLine();
+    DrawSegment(app, "On (test)", app.settings.fast_cpu_cores, w, [&app] {
+      app.settings.fast_cpu_cores = true;
+      SaveSettings(app);
+    });
+
+    row("EXTRA ARGUMENTS", 1);
+    static char extra_arguments[512] = {};
+    static bool extra_loaded = false;
+    if (!extra_loaded) {
+      std::snprintf(extra_arguments, sizeof(extra_arguments), "%s", app.settings.extra_arguments.c_str());
+      extra_loaded = true;
+    }
+    ImGui::SetNextItemWidth(-1.0f);
+    if (ImGui::InputTextWithHint("##extra-arguments", "--option=value --other=value", extra_arguments,
+                                 sizeof(extra_arguments))) {
+      app.settings.extra_arguments = extra_arguments;
+    }
+    g_page_drag_blocked |= ImGui::IsItemActive();
+    if (ImGui::IsItemDeactivatedAfterEdit()) SaveSettings(app);
+
+    const bool mali = UsesMaliProfile(app.settings, app.gpus);
+    const std::string gpu_name = app.gpus.empty() ? std::string("unknown") : app.gpus.front().name;
+    const std::string note = "This phone: " + gpu_name + (mali ? " - Mali settings on." : " - Mali settings off.") +
+                             " The game runs at up to 60 frames a second; Frame Rate above picks 30 or 60.";
+    DrawTextDisabled(app, note.c_str());
   }
   EndPanel();
 
@@ -3302,7 +3427,7 @@ void DrawGameFiles(AppState& app) {
     ImGui::TableNextColumn();
     if (BeginPanel(app, "use-disc", ImVec2(tile, S(app, 88.0f)))) {
       if (ImGui::Button("Use a Disc Image", ImVec2(-1.0f, S(app, 32.0f)))) {
-        static const SDL_DialogFileFilter filters[]{{"Disc images", "iso;img"}};
+        static const SDL_DialogFileFilter filters[]{{"Disc images", kDiscImagePattern}};
         RequestDialog(app, DialogKind::DiscImage, filters, 1, false);
       }
       DrawTextDisabled(app, "Choose an .iso to extract");
@@ -3514,8 +3639,24 @@ void FinishKeyCapture(AppState& app, const char* key, bool cancelled) {
   SaveControls(app);
 }
 
+// ---- Touch layout editor: drag the on-screen controls where you want them; the game reads touch_layout.ini ----
+std::string TouchLayoutFile(const AppState& app) { return (app.paths.userdata_dir / "touch_layout.ini").string(); }
+
+wwe13::touch::Style EditorStyle(const AppState& app) {
+  return app.editor_android ? wwe13::touch::Style::kAndroid : wwe13::touch::Style::kXbox;
+}
+
+void OpenTouchEditor(AppState& app) {
+  const ImVec2 size = ImGui::GetIO().DisplaySize;
+  app.editor_android = app.settings.touch_controls == TouchControls::kAndroid;
+  app.editor_items = wwe13::touch::LoadLayout(EditorStyle(app), size.x / size.y, TouchLayoutFile(app),
+                                              float(app.settings.touch_size) / 100.0f);
+  app.editor_drag = -1;
+  app.touch_editor = true;
+}
+
 void DrawControls(AppState& app) {
-  if (BeginPanel(app, "touch-controls", ImVec2(0.0f, S(app, 150.0f)))) {
+  if (BeginPanel(app, "touch-controls", ImVec2(0.0f, S(app, 320.0f)))) {
     DrawPanelHeading(app, "ON-SCREEN CONTROLS", "Choose the buttons shown over the game.");
     ImGui::Spacing();
     const float touch_width = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x * 2.0f) / 3.0f;
@@ -3534,6 +3675,22 @@ void DrawControls(AppState& app) {
       app.settings.touch_controls = TouchControls::kNone;
       SaveSettings(app);
     });
+    ImGui::Spacing();
+    const float slider_w = ImGui::GetContentRegionAvail().x * 0.5f - S(app, 120.0f);
+    ImGui::SetNextItemWidth(slider_w);
+    ImGui::SliderInt("Button size", &app.settings.touch_size, 60, 150, "%d%%");
+    g_page_drag_blocked |= ImGui::IsItemActive();
+    if (ImGui::IsItemDeactivatedAfterEdit()) SaveSettings(app);
+    ImGui::SameLine(0.0f, S(app, 40.0f));
+    ImGui::SetNextItemWidth(slider_w);
+    ImGui::SliderInt("Opacity", &app.settings.touch_opacity, 15, 100, "%d%%");
+    g_page_drag_blocked |= ImGui::IsItemActive();
+    if (ImGui::IsItemDeactivatedAfterEdit()) SaveSettings(app);
+    DrawTextDisabled(app, "Size, opacity and layout take effect the next time the game starts.");
+    ImGui::Spacing();
+    ImGui::BeginDisabled(app.settings.touch_controls == TouchControls::kNone);
+    if (AccentButton(app, "EDIT BUTTON LAYOUT", ImVec2(S(app, 270.0f), S(app, 44.0f)))) OpenTouchEditor(app);
+    ImGui::EndDisabled();
   }
   EndPanel();
   ImGui::Spacing();
@@ -4114,13 +4271,36 @@ void RefreshLogsText(AppState& app) {
   app.logs_text = std::move(text);
 }
 
+// The artwork is 16:9. On a wider phone screen it is fitted to the screen height and kept on the right, so the
+// WWE '13 logo and the face stay whole and clear of the menu; the strip on the left mirrors the artwork's edge.
+// Narrower screens (tablets) are covered as before.
+void DrawArtwork(const AppState& app, ImDrawList* draw, ImVec2 size) {
+  if (!app.tex_bg) return;
+  float tw = 1280.0f, th = 720.0f;
+  SDL_GetTextureSize(app.tex_bg, &tw, &th);
+  const ImTextureID id = static_cast<ImTextureID>(reinterpret_cast<intptr_t>(app.tex_bg));
+  if (size.x / size.y > tw / th + 0.05f) {
+    const float w = tw * size.y / th;
+    const float x0 = size.x - w;
+    const float u = std::min(1.0f, x0 / w);
+    draw->AddImage(id, ImVec2(0.0f, 0.0f), ImVec2(x0 + 1.0f, size.y), ImVec2(u, 0.0f), ImVec2(0.0f, 1.0f),
+                   IM_COL32(150, 150, 150, 255));
+    draw->AddImage(id, ImVec2(x0, 0.0f), ImVec2(size.x, size.y));
+    return;
+  }
+  const float scale = std::max(size.x / tw, size.y / th);
+  const ImVec2 ds(tw * scale, th * scale);
+  const ImVec2 p((size.x - ds.x) * 0.5f, 0.0f);  // top-aligned: the logo stays whole
+  draw->AddImage(id, p, ImVec2(p.x + ds.x, p.y + ds.y));
+}
+
 // ---- CATONIX home screen: plain text menu drawn straight over the artwork ----
 bool HomeMenuItem(const AppState& app, const char* label, ImFont* font, float font_px, ImVec2 pos,
                   bool enabled) {
   // A button plate in the launcher's colours: dark glass, red edge, solid red while pressed.
   const ImVec2 text_size = font->CalcTextSizeA(font_px, FLT_MAX, 0.0f, label);
   const float pad = S(app, 8.0f);
-  const float plate_w = std::max(text_size.x + pad * 5.0f, font_px * 8.6f);
+  const float plate_w = std::max(text_size.x + pad * 5.0f, font_px * 7.2f);
   const float plate_h = text_size.y + pad * 1.2f;
   ImGui::SetCursorPos(pos);
   const ImVec2 origin = ImGui::GetCursorScreenPos();
@@ -4173,26 +4353,17 @@ void DrawHome(AppState& app) {
 
   // Embedded background artwork, scaled to cover the screen.
   draw->AddRectFilled(ImVec2(0, 0), size, IM_COL32(12, 13, 17, 255));
-  if (app.tex_bg) {
-    float tw = 1280.0f, th = 720.0f;
-    SDL_GetTextureSize(app.tex_bg, &tw, &th);
-    const float scale = std::max(size.x / tw, size.y / th);
-    const ImVec2 ds(tw * scale, th * scale);
-    const ImVec2 p((size.x - ds.x) * 0.5f, (size.y - ds.y) * 0.5f);
-    draw->AddImage(
-        static_cast<ImTextureID>(reinterpret_cast<intptr_t>(app.tex_bg)),
-        p, ImVec2(p.x + ds.x, p.y + ds.y));
-  }
+  DrawArtwork(app, draw, size);
   // One soft shade behind the menu keeps the text readable.
   draw->AddRectFilledMultiColor(
-      ImVec2(0, 0), ImVec2(size.x * 0.42f, size.y),
+      ImVec2(0, 0), ImVec2(size.x * 0.34f, size.y),
       IM_COL32(0, 0, 0, 150), IM_COL32(0, 0, 0, 0),
       IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 150));
 
   const float margin = S(app, 18.0f);
   const bool options_page = app.home_page == 1;
-  const float menu_px = size.y * (options_page ? 0.07f : 0.085f);
-  const float step = size.y * (options_page ? 0.115f : 0.135f);
+  const float menu_px = size.y * (options_page ? 0.056f : 0.064f);
+  const float step = size.y * (options_page ? 0.098f : 0.112f);
   const float menu_x = size.x * 0.02f;
   float menu_y = size.y * 0.045f;
   ImFont* menu_font = app.fonts.oswald_bold;
@@ -4208,12 +4379,12 @@ void DrawHome(AppState& app) {
     }
 #ifdef __ANDROID__
     if (HomeMenuItem(app, "SELECT FOLDER", menu_font, menu_px, place(), !busy)) StartSelectGameFolder(app);
-#else
+#endif
+    // An .iso works too: it is read where it is and unpacked into the app's game folder.
     if (HomeMenuItem(app, "IMPORT ISO", menu_font, menu_px, place(), !busy)) {
-      static const SDL_DialogFileFilter filters[]{{"Disc images", "iso;img"}};
+      static const SDL_DialogFileFilter filters[]{{"Disc images", kDiscImagePattern}};
       RequestDialog(app, DialogKind::DiscImage, filters, 1, false);
     }
-#endif
     if (HomeMenuItem(app, "OPTIONS", menu_font, menu_px, place(), true)) {
       app.show_logs = false;
       app.home_page = 1;
@@ -4408,14 +4579,15 @@ void DrawGuide(AppState& app) {
     ImGui::Spacing();
   };
   step("guide-1", "1. YOUR GAME FILES",
-       "Use your own copy of WWE '13 for Xbox 360. Extract the disc so you have a folder that contains "
+       "Use your own copy of WWE '13 for Xbox 360: an .iso disc image, or the extracted folder that contains "
        "default.xex. Title update 2.0.1.0 is supported: add it with Options > Add TU / DLC.", 130.0f);
   step("guide-2", "2. PUT THE FOLDER ON YOUR PHONE",
        "Copy the whole game folder to your phone's storage, for example Download/WWE2k13. "
        "The game needs several GB, and the same again free while it is copied into the app.", 130.0f);
-  step("guide-3", "3. SELECT FOLDER",
+  step("guide-3", "3. SELECT FOLDER OR IMPORT ISO",
        "On the home screen tap Select Folder and choose that folder. The launcher copies the game into the app "
-       "and checks it. When it says GAME FILES READY, tap Play.", 130.0f);
+       "and checks it. Or tap Import ISO and pick your .iso: the game is unpacked into the app (about 8 GB free "
+       "space needed; the .iso can be deleted afterwards). When it says GAME FILES READY, tap Play.", 150.0f);
   step("guide-4", "BEST PERFORMANCE",
        "Settings > Arena Crowd: Half or Off gives the steadiest frame rate. Anti-aliasing: Faster and "
        "Resolution: 480p lower the work further. Frame Rate: 30 Locked keeps the pace even.", 130.0f);
@@ -4474,7 +4646,100 @@ void DrawCredits(AppState& app) {
   EndPanel();
 }
 
+void DrawTouchEditor(AppState& app) {
+  namespace touch = wwe13::touch;
+  if (app.editor_android && !app.controls_tried) {
+    app.controls_tried = true;
+    app.tex_controls = LoadEmbeddedTexture(app.renderer, kControlsAtlasPng, kControlsAtlasPngSize);
+  }
+  const ImVec2 size = ImGui::GetIO().DisplaySize;
+  const float aspect = size.x / size.y;
+  ImGui::SetNextWindowPos(ImVec2(0, 0));
+  ImGui::SetNextWindowSize(size);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+  ImGui::Begin("Touch layout editor", nullptr,
+               ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                   ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+  ImDrawList* draw = ImGui::GetWindowDrawList();
+  draw->AddRectFilled(ImVec2(0, 0), size, IM_COL32(26, 27, 31, 255));
+
+  // The three buttons sit in the middle; a touch there is never the start of a drag.
+  const float bw = S(app, 150.0f), bh = S(app, 52.0f), gap = S(app, 18.0f);
+  const ImVec2 row(size.x * 0.5f - (bw * 3.0f + gap * 2.0f) * 0.5f, size.y * 0.5f - bh * 0.25f);
+  const ImGuiIO& io = ImGui::GetIO();
+  const bool over_buttons = io.MousePos.x >= row.x && io.MousePos.x <= row.x + bw * 3.0f + gap * 2.0f &&
+                            io.MousePos.y >= row.y && io.MousePos.y <= row.y + bh;
+  const float mx = io.MousePos.x / size.x, my = io.MousePos.y / size.y;
+  if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !over_buttons) {
+    app.editor_drag = touch::HitTest(app.editor_items, mx, my, aspect, nullptr);
+    if (app.editor_drag >= 0) {
+      app.editor_grab = ImVec2(app.editor_items[app.editor_drag].x - mx, app.editor_items[app.editor_drag].y - my);
+    }
+  }
+  if (app.editor_drag >= 0 && io.MouseDown[0]) {
+    touch::Item& item = app.editor_items[app.editor_drag];
+    const float keep_x = item.half_w / aspect, keep_y = item.half_h;
+    item.x = std::clamp(mx + app.editor_grab.x, keep_x, std::max(keep_x, 1.0f - keep_x));
+    item.y = std::clamp(my + app.editor_grab.y, keep_y, std::max(keep_y, 1.0f - keep_y));
+  }
+  if (!io.MouseDown[0]) app.editor_drag = -1;
+
+  touch::DrawState state;
+  state.highlight = app.editor_drag;
+  const ImTextureID atlas = app.tex_controls ? static_cast<ImTextureID>(reinterpret_cast<intptr_t>(app.tex_controls))
+                                             : ImTextureID{};
+  touch::Draw(draw, size, app.editor_items, atlas, 235, state, app.fonts.oswald_semibold);
+
+  const char* title = "DRAG A CONTROL TO MOVE IT";
+  const float title_px = S(app, 34.0f);
+  const ImVec2 title_size = app.fonts.oswald_semibold->CalcTextSizeA(title_px, FLT_MAX, 0.0f, title);
+  draw->AddText(app.fonts.oswald_semibold, title_px,
+                ImVec2(size.x * 0.5f - title_size.x * 0.5f, row.y - title_size.y - S(app, 26.0f)),
+                IM_COL32(245, 245, 245, 255), title);
+
+  ImGui::PushFont(app.fonts.oswald_semibold);
+  ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, S(app, 14.0f));
+  ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, S(app, 2.5f));
+  ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.93f, 0.93f, 0.93f, 1.0f));
+  ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.16f, 0.20f, 1.0f));
+  ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.22f, 0.23f, 0.28f, 1.0f));
+  ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.28f, 0.29f, 0.35f, 1.0f));
+  ImGui::SetCursorScreenPos(row);
+  const bool cancel = ImGui::Button("CANCEL", ImVec2(bw, bh));
+  ImGui::SameLine(0.0f, gap);
+  const bool reset = ImGui::Button("RESET", ImVec2(bw, bh));
+  ImGui::SameLine(0.0f, gap);
+  ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.10f, 0.13f, 1.0f));
+  ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.68f, 0.14f, 0.17f, 1.0f));
+  ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.78f, 0.18f, 0.21f, 1.0f));
+  const bool done = ImGui::Button("DONE", ImVec2(bw, bh));
+  ImGui::PopStyleColor(7);
+  ImGui::PopStyleVar(2);
+  ImGui::PopFont();
+
+  if (reset) {
+    app.editor_items = touch::LoadLayout(EditorStyle(app), aspect, "", float(app.settings.touch_size) / 100.0f);
+    app.editor_drag = -1;
+  }
+  if (cancel) app.touch_editor = false;
+  if (done) {
+    if (touch::SaveLayout(EditorStyle(app), app.editor_items, TouchLayoutFile(app))) {
+      SetBanner(app, "Button layout saved. It is used the next time the game starts.", true);
+    } else {
+      SetBanner(app, "The button layout could not be saved.");
+    }
+    app.touch_editor = false;
+  }
+  ImGui::End();
+  ImGui::PopStyleVar(2);
+}
+
 void DrawMain(AppState& app) {
+  if (app.touch_editor) {
+    DrawTouchEditor(app);
+    return;
+  }
   if (app.show_home) {
     DrawHome(app);
     return;
@@ -4493,15 +4758,7 @@ void DrawMain(AppState& app) {
     }
     const ImVec2 bg_size = ImGui::GetIO().DisplaySize;
     ImDrawList* bg_draw = ImGui::GetWindowDrawList();
-    if (app.tex_bg) {
-      float bg_tw = 1280.0f, bg_th = 720.0f;
-      SDL_GetTextureSize(app.tex_bg, &bg_tw, &bg_th);
-      const float bg_scale = std::max(bg_size.x / bg_tw, bg_size.y / bg_th);
-      const ImVec2 bg_ds(bg_tw * bg_scale, bg_th * bg_scale);
-      const ImVec2 bg_p((bg_size.x - bg_ds.x) * 0.5f, (bg_size.y - bg_ds.y) * 0.5f);
-      bg_draw->AddImage(static_cast<ImTextureID>(reinterpret_cast<intptr_t>(app.tex_bg)), bg_p,
-                        ImVec2(bg_p.x + bg_ds.x, bg_p.y + bg_ds.y));
-    }
+    DrawArtwork(app, bg_draw, bg_size);
     bg_draw->AddRectFilled(ImVec2(0, 0), bg_size, IM_COL32(6, 7, 10, 178));
   }
   DrawSidebar(app);
@@ -4531,6 +4788,19 @@ void DrawMain(AppState& app) {
     case Tab::Controls: DrawControls(app); break;
     case Tab::Content: DrawContent(app); break;
     case Tab::GameFiles: DrawGameFiles(app); break;
+  }
+  {
+    static bool drag_scrolling = false;
+    const ImGuiIO& io = ImGui::GetIO();
+    if (!io.MouseDown[0]) drag_scrolling = false;
+    if (!g_page_drag_blocked && io.MouseDown[0] &&
+        ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
+        (drag_scrolling || ImGui::IsMouseDragging(ImGuiMouseButton_Left, S(app, 12.0f)))) {
+      if (!drag_scrolling) ImGui::ClearActiveID();  // a drag is a scroll, not a tap on the button under it
+      drag_scrolling = true;
+      ImGui::SetScrollY(ImGui::GetScrollY() - io.MouseDelta.y);
+    }
+    g_page_drag_blocked = false;
   }
   ImGui::EndChild();
   DrawFooter(app);

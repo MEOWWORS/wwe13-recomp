@@ -103,6 +103,7 @@ std::optional<Resolution> ParseResolution(std::string_view value) {
   if (EqualsAsciiInsensitive(value, "720p")) return Resolution::k720p;
   if (EqualsAsciiInsensitive(value, "1080p")) return Resolution::k1080p;
   if (EqualsAsciiInsensitive(value, "1440p")) return Resolution::k1440p;
+  if (EqualsAsciiInsensitive(value, "900p")) return Resolution::k900p;
   return std::nullopt;
 }
 
@@ -126,6 +127,7 @@ std::string ResolutionName(Resolution value) {
     case Resolution::k720p: return "720p";
     case Resolution::k1080p: return "1080p";
     case Resolution::k1440p: return "1440p";
+    case Resolution::k900p: return "900p";
   }
   return "720p";
 }
@@ -217,7 +219,9 @@ std::string BuildIni(const Paths& paths, const Settings& settings) {
   const std::set<std::string> replaced = {"schema", "anti_aliasing", "resolution", "frame_rate",
                                           "display", "gpu", "game_folder", "auto_start",
                                           "auto_backup", "stretch_to_fill", "sync_to_display",
-                                          "check_updates", "skipped_update_version", "touch_controls", "arena_crowd"};
+                                          "check_updates", "skipped_update_version", "touch_controls", "arena_crowd",
+                                          "gpu_profile", "vsync", "fast_cpu_cores", "touch_size",
+                                          "touch_opacity", "extra_arguments"};
   std::vector<std::string> unknown_settings;
   std::vector<std::string> outside_settings;
   std::string active_section;
@@ -262,6 +266,15 @@ std::string BuildIni(const Paths& paths, const Settings& settings) {
          << "\r\ntouch_controls="
          << (settings.touch_controls == TouchControls::kXbox360 ? "xbox360"
              : settings.touch_controls == TouchControls::kNone ? "none" : "android")
+         << "\r\ngpu_profile="
+         << (settings.gpu_profile == GpuProfile::kMali     ? "mali"
+             : settings.gpu_profile == GpuProfile::kAdreno ? "adreno"
+             : settings.gpu_profile == GpuProfile::kOther  ? "other" : "auto")
+         << "\r\nvsync=" << (settings.vsync ? "1" : "0")
+         << "\r\nfast_cpu_cores=" << (settings.fast_cpu_cores ? "1" : "0")
+         << "\r\ntouch_size=" << settings.touch_size
+         << "\r\ntouch_opacity=" << settings.touch_opacity
+         << "\r\nextra_arguments=" << settings.extra_arguments
          << "\r\nskipped_update_version=" << settings.skipped_update_version << "\r\n";
   for (const auto& line : unknown_settings) output << line << "\r\n";
   if (!outside_settings.empty()) {
@@ -371,6 +384,21 @@ Settings LoadSettingsImpl(const Paths& paths) {
   if (!check_updates.empty()) {
     settings.check_updates = check_updates == "1" || EqualsAsciiInsensitive(check_updates, "true");
   }
+  const std::string gpu_profile = IniValue(entries, "gpu_profile");
+  if (EqualsAsciiInsensitive(gpu_profile, "mali")) settings.gpu_profile = GpuProfile::kMali;
+  else if (EqualsAsciiInsensitive(gpu_profile, "adreno")) settings.gpu_profile = GpuProfile::kAdreno;
+  else if (EqualsAsciiInsensitive(gpu_profile, "other")) settings.gpu_profile = GpuProfile::kOther;
+  settings.vsync = IniValue(entries, "vsync") == "1";
+  settings.fast_cpu_cores = IniValue(entries, "fast_cpu_cores") == "1";
+  auto percent = [&entries](const char* key, int fallback, int low, int high) {
+    const std::string text = Trim(IniValue(entries, key));
+    if (text.empty() || text.size() > 3 || !std::all_of(text.begin(), text.end(), [](char c) { return c >= '0' && c <= '9'; })) return fallback;
+    const int value = std::stoi(text);
+    return value < low || value > high ? fallback : value;
+  };
+  settings.touch_size = percent("touch_size", 100, 60, 150);
+  settings.touch_opacity = percent("touch_opacity", 46, 15, 100);
+  settings.extra_arguments = Trim(IniValue(entries, "extra_arguments"));
   settings.skipped_update_version = Trim(IniValue(entries, "skipped_update_version"));
   settings.explicit_choice = resolution_explicit || frame_explicit;
   return settings;

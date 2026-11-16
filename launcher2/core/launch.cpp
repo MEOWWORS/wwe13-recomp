@@ -47,6 +47,7 @@ ResolutionParameters GetResolutionParameters(Resolution resolution) {
     case Resolution::k576p: return {"720p", "576", 0};
     case Resolution::k1080p: return {"1080p", "1080", 0};
     case Resolution::k1440p: return {"720p", nullptr, 2};
+    case Resolution::k900p: return {"1080p", "900", 0};
     case Resolution::k720p: default: return {"720p", nullptr, 0};
   }
 }
@@ -273,7 +274,35 @@ LaunchPlan BuildLaunchPlan(const Paths& paths, const Settings& settings,
   plan.arguments.emplace_back("--vulkan_upload_hoist=2");  // hoist small safe uploads out of the render pass (test)
   plan.arguments.emplace_back("--vulkan_rt_fast_path_clip_disable=true");  // test: fast RT update for clip-disabled draws
   plan.arguments.emplace_back("--vulkan_eager_resolved_texture_load=true");  // test: reload resolved textures between passes
+  if (UsesMaliProfile(effective, gpus)) {
+    // What Mali drivers lack (as the SvR 2011 port sets them): line drawing, vertex shader stores, and
+    // fast geometry shaders - the emulator's fallbacks instead. Only on Mali, so Adreno stays as it is.
+    for (const char* argument : {"--vulkan_require_geometry_shader=false", "--vulkan_require_fill_mode_non_solid=false",
+                                 "--vulkan_require_vertex_pipeline_stores_and_atomics=false",
+                                 "--vulkan_force_expand_point_sprites_in_vs=true",
+                                 "--vulkan_force_convert_quad_lists_to_triangle_lists=true"}) {
+      plan.arguments.emplace_back(argument);
+    }
+  }
+  if (effective.vsync) {
+    // VSync: present in step with the display (FIFO), no mailbox replacing frames.
+    plan.arguments.emplace_back("--vulkan_allow_present_mode_mailbox=false");
+    plan.arguments.emplace_back("--vulkan_allow_present_mode_fifo_relaxed=false");
+  }
 #endif
+  // Extra arguments typed in Settings: each "--name=value" word is passed on as it is.
+  {
+    std::string word;
+    const std::string text = effective.extra_arguments + " ";
+    for (const char c : text) {
+      if (c == ' ' || c == '\t') {
+        if (word.size() > 2 && word.rfind("--", 0) == 0) plan.arguments.push_back(word);
+        word.clear();
+      } else {
+        word.push_back(c);
+      }
+    }
+  }
 
   plan.environment = {
       {"REX_DEBUG_UI", "false"},
@@ -293,6 +322,11 @@ LaunchPlan BuildLaunchPlan(const Paths& paths, const Settings& settings,
       {"WWE13_SCENE_AA", effective.anti_aliasing == AntiAliasing::kFaster2x ? "2x" : ""},
       {"WWE13_ARENA_CROWD", effective.arena_crowd == ArenaCrowd::kOff ? "off"
                             : effective.arena_crowd == ArenaCrowd::kHalf ? "half" : "full"},
+      {"WWE13_GPU_PROFILE", UsesMaliProfile(effective, gpus) ? "mali" : "default"},
+      {"WWE13_BIG_CORES", effective.fast_cpu_cores ? "1" : "0"},
+      {"WWE13_TOUCH_SCALE", std::to_string(effective.touch_size)},
+      {"WWE13_TOUCH_LAYOUT", internal::PathToUtf8(paths.userdata_dir / "touch_layout.ini")},
+      {"WWE13_TOUCH_ALPHA", std::to_string(effective.touch_opacity)},
       {"WWE13_TOUCH_STYLE", effective.touch_controls == TouchControls::kXbox360 ? "xbox"
                             : effective.touch_controls == TouchControls::kNone ? "none" : "android"}};
 #ifndef _WIN32

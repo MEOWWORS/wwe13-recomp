@@ -79,6 +79,9 @@ const std::pair<uint32_t, uint32_t>& CustomSceneSize() {
     if (value && std::strcmp(value, "1080") == 0) {
       return std::pair<uint32_t, uint32_t>(1920, 1080);
     }
+    if (value && std::strcmp(value, "900") == 0) {
+      return std::pair<uint32_t, uint32_t>(1600, 900);
+    }
     return std::pair<uint32_t, uint32_t>(0, 0);
   }();
   return size;
@@ -91,7 +94,8 @@ const SceneResolutionChoice& Choice() {
       return SceneResolutionChoice{true, 5, custom_size.first, custom_size.second,
                                    custom_size.first == 1920 && custom_size.second == 1080
                                        ? "1080p"
-                                       : "custom scene size"};
+                                   : custom_size.first == 1600 && custom_size.second == 900 ? "900p"
+                                                                                         : "custom scene size"};
     }
     const char* value = std::getenv("WWE13_INTERNAL_RES");
     if (value == nullptr || *value == '\0') {
@@ -131,7 +135,8 @@ void InitializeSceneResolutionOption() {
   REXLOG_INFO("[wwe13-dof] composite_nop={} for {} cvar_set={}",
               disable_dof_composite, choice.name, dof_cvar_configured);
   const bool remap_enabled =
-      choice.enabled && (choice.index == 0 || choice.index == 3 || is_1080p);
+      choice.enabled && (choice.index == 0 || choice.index == 3 || is_1080p ||
+                         (choice.width == 1600 && choice.height == 900));
   if (remap_enabled) {
     uint32_t from_x = 0, from_y = 0, to_x = 0, to_y = 0;
     const std::string setting = MakeUiC0RemapSetting(choice, from_x, from_y, to_x, to_y);

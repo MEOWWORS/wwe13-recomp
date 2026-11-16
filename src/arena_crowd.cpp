@@ -238,8 +238,10 @@ fs::path ArenaCrowdCopy(const fs::path& original) {
   const bool half = g_level == Level::kHalf;
   const fs::path copy = g_cache_dir / ((half ? "half_" : "off_") + original.filename().string());
   const fs::path stamp_file = copy.string() + ".stamp";
-  const std::string want = Stamp(original);
-  if (want.empty()) return {};
+  // " v2": stamps from before compressed arenas were handled are re-checked (their "original" no longer holds).
+  const std::string stamp = Stamp(original);
+  if (stamp.empty()) return {};
+  const std::string want = stamp + " v2";
   std::lock_guard lock(g_mutex);
   std::error_code ec;
   const std::string have = ReadText(stamp_file);

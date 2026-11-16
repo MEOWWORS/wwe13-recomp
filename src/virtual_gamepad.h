@@ -11,6 +11,8 @@
 #include <rex/ui/immediate_drawer.h>
 #include <rex/ui/window_listener.h>
 
+#include "touch_layout.h"
+
 namespace wwe13 {
 
 struct VirtualGamepadState {
@@ -25,21 +27,14 @@ struct VirtualGamepadState {
   int16_t right_y = 0;
   uint32_t packet_number = 0;
 
-  enum class Control : uint8_t {
-    kNone,
-    kLeftStick,
-    kRightStick,
-    kA, kB, kX, kY,
-    kDpadUp, kDpadDown, kDpadLeft, kDpadRight,
-    kLeftShoulder, kRightShoulder,
-    kLeftTrigger, kRightTrigger,
-    kStart, kBack,
-  };
+  // What each touch presses (touch_layout.h; the on-screen layout is shared with the launcher's editor).
+  using Control = touch::Action;
 
   struct Touch {
     Control control = Control::kNone;
     float x = 0.0f;
     float y = 0.0f;
+    int item = -1;  // index of the control in the layout
   };
 
   std::unordered_map<uint32_t, Touch> touches;

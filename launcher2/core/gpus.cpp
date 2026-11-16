@@ -85,6 +85,16 @@ std::vector<GpuInfo> ListGpus() {
   return result;
 }
 
+bool UsesMaliProfile(const Settings& settings, const std::vector<GpuInfo>& gpus) {
+  if (settings.gpu_profile != GpuProfile::kAuto) return settings.gpu_profile == GpuProfile::kMali;
+  for (const GpuInfo& gpu : gpus) {
+    if (!settings.gpu_id.empty() && gpu.id != settings.gpu_id) continue;
+    // Arm's Vulkan vendor id is 0x13B5 (ids are "VVVV:DDDD").
+    if (gpu.id.rfind("13B5", 0) == 0 || gpu.name.find("Mali") != std::string::npos) return true;
+  }
+  return false;
+}
+
 Recommendation RecommendedSettings(const std::vector<GpuInfo>& gpus) {
   Recommendation recommendation;
   recommendation.settings.resolution = Resolution::k720p;
