@@ -94,7 +94,7 @@ constexpr char kNoVulkanMessage[] =
     "This PC has no graphics card with Vulkan 1.1 support, which WWE '13 Recomp needs. Update the "
     "graphics driver, or use a PC with a Vulkan-capable graphics card.";
 
-enum class Tab { Play, Settings, Controls, Content, GameFiles, Credits };
+enum class Tab { Play, Settings, Controls, Content, GameFiles, Credits, Guide };
 enum class ContentCategory { Superstars, Entrances, Arenas, Logos, Videos, Music, SaveData };
 enum class DialogKind { None, Music, DiscImage, Package, GameFolder, Backup, CreationFiles, CreationFolder, FullSave, Video };
 
@@ -288,9 +288,9 @@ void SetMinimumWindowSize(const AppState& app) {
   SDL_SetWindowMinimumSize(app.window, width, height);
 }
 
-const std::array<std::pair<Tab, const char*>, 5> kTabs{{
+const std::array<std::pair<Tab, const char*>, 6> kTabs{{
     {Tab::Settings, "Settings"}, {Tab::Controls, "Controls"}, {Tab::Content, "Content"},
-    {Tab::GameFiles, "Game files"}, {Tab::Credits, "Credits"},
+    {Tab::GameFiles, "Game files"}, {Tab::Credits, "Credits"}, {Tab::Guide, "Guide"},
 }};
 
 std::string PathUtf8(const fs::path& path) {
@@ -4132,7 +4132,11 @@ bool HomeMenuItem(const AppState& app, const char* label, ImFont* font, float fo
   const ImVec2 plate_max(origin.x + plate_w, origin.y + plate_h);
   const float rounding = S(app, 6.0f);
   const ImU32 accent = ImGui::ColorConvertFloat4ToU32(kAccent);
-  draw->AddRectFilled(origin, plate_max, hot ? accent : IM_COL32(8, 9, 12, enabled ? 170 : 105), rounding);
+  // PLAY is the main action: a solid red plate.
+  const bool primary = enabled && std::string(label) == "PLAY";
+  const ImU32 plate = hot ? (primary ? IM_COL32(255, 92, 92, 240) : accent)
+                    : primary ? IM_COL32(205, 32, 44, 225) : IM_COL32(8, 9, 12, enabled ? 170 : 105);
+  draw->AddRectFilled(origin, plate_max, plate, rounding);
   draw->AddRect(origin, plate_max, IM_COL32(255, 255, 255, hot ? 130 : 48), rounding, 0, S(app, 1.5f));
   draw->AddRectFilled(origin, ImVec2(origin.x + S(app, 6.0f), plate_max.y),
                       enabled ? accent : IM_COL32(120, 120, 120, 150), rounding, ImDrawFlags_RoundCornersLeft);
@@ -4213,6 +4217,10 @@ void DrawHome(AppState& app) {
     if (HomeMenuItem(app, "OPTIONS", menu_font, menu_px, place(), true)) {
       app.show_logs = false;
       app.home_page = 1;
+    }
+    if (HomeMenuItem(app, "GUIDE", menu_font, menu_px, place(), true)) {
+      app.tab = Tab::Guide;
+      app.show_home = false;
     }
   } else {
     if (HomeMenuItem(app, "SETTINGS", menu_font, menu_px, place(), true)) {
@@ -4295,10 +4303,19 @@ void DrawHome(AppState& app) {
 #else
     const char* need_text = "GAME FILES REQUIRED - IMPORT YOUR ISO";
 #endif
+    const std::string status_text =
+        std::string(ready ? "GAME FILES READY" : need_text) + "   |   v" + WWE13_LAUNCHER_VERSION;
     draw->AddText(app.fonts.barlow_medium, status_px, ImVec2(margin + 1.5f, status_y + 1.5f),
-        IM_COL32(0, 0, 0, 170), ready ? "GAME FILES READY" : need_text);
+        IM_COL32(0, 0, 0, 170), status_text.c_str());
     draw->AddText(app.fonts.barlow_medium, status_px, ImVec2(margin, status_y),
-        ImGui::ColorConvertFloat4ToU32(ready ? kSuccess : kDanger), ready ? "GAME FILES READY" : need_text);
+        ImGui::ColorConvertFloat4ToU32(ready ? kSuccess : kDanger), status_text.c_str());
+    if (ready && app.banner.empty()) {
+      const char* tip = "TIP: OPTIONS > SETTINGS > ARENA CROWD: HALF OR OFF FOR A STEADIER FRAME RATE";
+      const float tip_px = status_px * 0.78f;
+      const float tip_y = status_y - tip_px * 1.6f;
+      draw->AddText(app.fonts.barlow_medium, tip_px, ImVec2(margin + 1.0f, tip_y + 1.0f), IM_COL32(0, 0, 0, 170), tip);
+      draw->AddText(app.fonts.barlow_medium, tip_px, ImVec2(margin, tip_y), IM_COL32(230, 230, 230, 200), tip);
+    }
     if (!app.banner.empty()) {
       ImGui::SetCursorPos(ImVec2(margin, status_y - S(app, 58.0f)));
       ImGui::BeginChild("home-banner", ImVec2(size.x * 0.5f, S(app, 52.0f)), false,
@@ -4374,6 +4391,40 @@ void DrawHome(AppState& app) {
 
   ImGui::End();
   ImGui::PopStyleVar(2);
+}
+
+void DrawGuide(AppState& app) {
+  auto step = [&app](const char* id, const char* title, const char* body, float height) {
+    if (BeginPanel(app, id, ImVec2(0.0f, S(app, height)))) {
+      ImGui::PushFont(app.fonts.oswald_medium);
+      ImGui::TextColored(kText, "%s", title);
+      ImGui::PopFont();
+      ImGui::Spacing();
+      ImGui::PushStyleColor(ImGuiCol_Text, kSecondary);
+      ImGui::TextWrapped("%s", body);
+      ImGui::PopStyleColor();
+    }
+    EndPanel();
+    ImGui::Spacing();
+  };
+  step("guide-1", "1. YOUR GAME FILES",
+       "Use your own copy of WWE '13 for Xbox 360. Extract the disc so you have a folder that contains "
+       "default.xex. Title update 2.0.1.0 is supported: add it with Options > Add TU / DLC.", 130.0f);
+  step("guide-2", "2. PUT THE FOLDER ON YOUR PHONE",
+       "Copy the whole game folder to your phone's storage, for example Download/WWE2k13. "
+       "The game needs several GB, and the same again free while it is copied into the app.", 130.0f);
+  step("guide-3", "3. SELECT FOLDER",
+       "On the home screen tap Select Folder and choose that folder. The launcher copies the game into the app "
+       "and checks it. When it says GAME FILES READY, tap Play.", 130.0f);
+  step("guide-4", "BEST PERFORMANCE",
+       "Settings > Arena Crowd: Half or Off gives the steadiest frame rate. Anti-aliasing: Faster and "
+       "Resolution: 480p lower the work further. Frame Rate: 30 Locked keeps the pace even.", 130.0f);
+  step("guide-5", "CONTROLS",
+       "Controls > On-screen controls: Android (icons), Xbox 360 (A / B / X / Y) or None when you use a gamepad. "
+       "A connected controller always works.", 115.0f);
+  step("guide-6", "IF SOMETHING GOES WRONG",
+       "Save a Bug Report (bottom bar) and send it with a short description. Do not uninstall the app to fix a "
+       "problem: that deletes the copied game files.", 115.0f);
 }
 
 void DrawCredits(AppState& app) {
@@ -4460,7 +4511,7 @@ void DrawMain(AppState& app) {
   ImGui::BeginChild("launcher-content", ImVec2(0.0f, 0.0f), ImGuiChildFlags_AlwaysUseWindowPadding,
                     ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
   ImGui::PushFont(app.fonts.oswald_semibold);
-   static const std::array<const char*, 6> page_titles{{"PLAY", "SETTINGS", "CONTROLS", "CONTENT", "GAME FILES", "CREDITS"}};
+   static const std::array<const char*, 7> page_titles{{"PLAY", "SETTINGS", "CONTROLS", "CONTENT", "GAME FILES", "CREDITS", "GUIDE"}};
   ImGui::TextColored(kText, "%s", page_titles[static_cast<size_t>(app.tab)]);
   ImGui::PopFont();
   ImGui::Spacing();
@@ -4475,6 +4526,7 @@ void DrawMain(AppState& app) {
   switch (app.tab) {
     case Tab::Play: DrawPlay(app); break;
     case Tab::Credits: DrawCredits(app); break;
+    case Tab::Guide: DrawGuide(app); break;
     case Tab::Settings: DrawSettings(app); break;
     case Tab::Controls: DrawControls(app); break;
     case Tab::Content: DrawContent(app); break;

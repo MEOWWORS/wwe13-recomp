@@ -5,6 +5,7 @@
 // keeps its model but draws nothing: its triangle strips get no indices and its bounding sphere no radius, and
 // its now unused vertex data is zeroed so the re-packed file stays smaller than the original. The copy is padded
 // to the original's exact size, so the size the game was told when it listed the folder stays right.
+// Arenas stored XMemCompress'd are unpacked first and served uncompressed.
 //
 // The approach and the archive code (third_party/svrfmt: pac.cpp, pac.h, bytes.h) come from the WWE SmackDown vs.
 // Raw 2011 PC port's crowd option (crowd_off.cpp), MIT licence, (c) 2026 KaikoClanworth1 and contributors.
@@ -26,6 +27,7 @@
 
 #include <rex/filesystem/devices/host_path_device.h>
 #include <rex/logging.h>
+#include <rex/system/lzx.h>
 
 #include "svrfmt/pac.h"
 
@@ -83,8 +85,92 @@ bool EmptyPerson(Bytes& d) {
   return true;
 }
 
+
+// XMemCompress (0x0FF512ED) files, as some WWE '13 arenas are stored: a header, a bit-packed table of each chunk's
+// unpacked size, then chunks of LZX frames ({u16 packed size} for 32 KB, or {0xFF, u16 unpacked, u16 packed}).
+// Layout as read by the SvR 2011 port's WWE '13 importer (wwe13.cpp, XcompressDecode); LZX by the SDK (libmspack).
+bool IsXcompress(const Bytes& d) { return d.size() >= 16 && Be32(d.data()) == 0x0FF512EDu; }
+
+bool XcompressDecode(const Bytes& d, Bytes& out) {
+  if (!IsXcompress(d)) return false;
+  const uint32_t flags = Be32(&d[12]);
+  const uint32_t n = (flags >> 6) & 0xFFFF, bits = (flags & 0xC00000) ? 32 : 20;
+  const uint32_t shift = (flags >> 4) & 3;
+  const size_t chunk = size_t(0x8000) << shift;
+  const uint32_t window = uint32_t(1) << (15 + shift);
+  const size_t table = ((size_t(bits) * n + 31) >> 5) * 4, data = 16 + table;
+  if (!n || data > d.size()) return false;
+  std::vector<uint32_t> sizes(n);
+  uint64_t total = 0;
+  for (uint32_t i = 0; i < n; ++i) {
+    uint64_t v = 0;
+    for (uint32_t b = 0; b < bits; ++b) {
+      const uint64_t q = uint64_t(i) * bits + b;
+      v = v << 1 | ((d[16 + q / 8] >> (7 - q % 8)) & 1);
+    }
+    sizes[i] = uint32_t(v);
+    total += v;
+  }
+  if (total > (uint64_t(256) << 20)) return false;
+  out.assign(size_t(total), 0);
+  auto frames_at = [&](size_t p, size_t unpacked, Bytes& frames, size_t* after) {
+    frames.clear();
+    size_t got = 0;
+    while (got < unpacked && p + 2 <= d.size()) {
+      size_t c, u = 0x8000;
+      if (d[p] == 0xFF) {
+        if (p + 5 > d.size()) return false;
+        u = size_t(d[p + 1]) << 8 | d[p + 2];
+        c = size_t(d[p + 3]) << 8 | d[p + 4];
+        p += 5;
+      } else {
+        c = size_t(d[p]) << 8 | d[p + 1];
+        p += 2;
+      }
+      if (!c || p + c > d.size()) return false;
+      frames.insert(frames.end(), d.begin() + ptrdiff_t(p), d.begin() + ptrdiff_t(p + c));
+      if (c & 1) frames.push_back(0);  // the LZX reader works in 16-bit words
+      p += c;
+      got += u ? u : 0x8000;
+    }
+    *after = p;
+    return got >= unpacked;
+  };
+  Bytes frames;
+  size_t op = 0, next = data;
+  for (uint32_t i = 0; i < n; ++i) {
+    // chunk i: usually at offset i * chunk (chunk 0 after the header); some files pack them back to back
+    const size_t slot = i ? size_t(i) * chunk : data;
+    int r = -2;
+    size_t after = 0;
+    std::vector<size_t> starts{slot};
+    if (next != slot) starts.push_back(next);
+    for (const size_t start : starts) {
+      if (start + 2 + sizes[i] <= d.size() && d[start] == 0 && d[start + 1] == 0) {  // a stored chunk
+        std::memcpy(out.data() + op, &d[start + 2], sizes[i]);
+        after = start + 2 + sizes[i];
+        r = 0;
+        break;
+      }
+      if (!frames_at(start, sizes[i], frames, &after)) continue;
+      r = lzx_decompress(frames.data(), frames.size(), out.data() + op, sizes[i], window, nullptr, 0);
+      if (!r) break;
+    }
+    if (r) return false;
+    next = after;
+    op += sizes[i];
+  }
+  return true;
+}
+
 // The arena without (half of) its crowd. False: no crowd found, or the copy would not fit.
-bool Strip(const Bytes& in, Bytes& out, int& emptied, bool half) {
+bool Strip(const Bytes& file, Bytes& out, int& emptied, bool half) {
+  // Compressed arenas are unpacked; their copy is written uncompressed (as other arenas are stored), so it is
+  // bigger than the file it replaces - the SDK reports the copy's own size to the game.
+  Bytes unpacked;
+  const bool compressed = IsXcompress(file);
+  if (compressed && !XcompressDecode(file, unpacked)) return false;
+  const Bytes& in = compressed ? unpacked : file;
   svrfmt::Epac epac;
   if (!svrfmt::EpacRead(in, epac)) return false;
   for (auto& group : epac.groups) {
@@ -113,8 +199,8 @@ bool Strip(const Bytes& in, Bytes& out, int& emptied, bool half) {
       if (!any) continue;
       entry.data = svrfmt::PachWrite(entries);
       out = svrfmt::EpacWrite(epac);
-      if (out.size() > in.size()) return false;
-      out.resize(in.size(), 0);  // the size the game listed
+      if (out.size() > in.size()) return false;  // never more than the arena's own unpacked size
+      if (!compressed) out.resize(in.size(), 0);  // stored arenas keep their exact size
       return true;
     }
   }
