@@ -290,6 +290,7 @@ LaunchPlan BuildLaunchPlan(const Paths& paths, const Settings& settings,
     plan.arguments.emplace_back("--vulkan_allow_present_mode_fifo_relaxed=false");
   }
 #endif
+  if (!effective.disc_image.empty()) plan.arguments.push_back("--game_disc_image=" + effective.disc_image);
   // Extra arguments typed in Settings: each "--name=value" word is passed on as it is.
   {
     std::string word;

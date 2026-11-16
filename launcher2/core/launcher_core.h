@@ -67,6 +67,7 @@ struct Settings {
   int touch_size = 100;          // on-screen buttons, percent (60-150)
   int touch_opacity = 46;        // on-screen buttons, percent (15-100)
   std::string extra_arguments;   // extra --option=value arguments for the game, separated by spaces
+  std::string disc_image;        // play straight from this .iso (path or content:// URI); empty = folder only
   std::string gpu_id;    // stable id of the chosen Vulkan device ("" = recommended)
   fs::path game_folder;  // folder holding default.xex + default.xexp
   bool auto_start = false;          // "Start straight away next time" (hold Shift at start to come back)
@@ -135,6 +136,9 @@ uint64_t FindGameFilesHeaderReadCount();
 // Verifies it is WWE '13 (default.xex title ID) before extracting into dest_folder.
 Result ExtractDiscImage(const fs::path& iso, const fs::path& dest_folder, const ProgressFn& progress,
                         const CancelFlag& cancel);
+// Play-from-disc: checks the image is WWE '13 and copies only its default.xex into dest_folder (for the version
+// checks). The game reads everything else from the image; a title update goes into dest_folder as usual.
+Result PrepareDiscImageFolder(const fs::path& iso, const fs::path& dest_folder);
 
 // ---------------------------------------------------------------------------------------------- TU / DLC (F3)
 // STFS CON/LIVE/PIRS packages (the title update package and the DLC packs) or Xenia content folders.

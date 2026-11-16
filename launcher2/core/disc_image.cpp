@@ -102,6 +102,49 @@ void RemovePartial(const fs::path& partial) {
 
 }  // namespace
 
+Result PrepareDiscImageFolder(const fs::path& iso, const fs::path& dest_folder) {
+  try {
+    internal::XdvdfsReader reader;
+    std::string error;
+    if (!reader.Open(iso, &error)) {
+      return Result::Fail(error.empty() ? "This is not an Xbox 360 disc image." : error);
+    }
+    const internal::XdvdfsEntry* xex = reader.FindRootFile("default.xex");
+    uint32_t title_id = 0;
+    if (!xex || !ReadXexTitleId(reader, *xex, &title_id)) {
+      return Result::Fail("This disc image does not contain a valid WWE '13 game executable.");
+    }
+    if (title_id != kWwe13TitleId) {
+      return Result::Fail("This disc is not WWE '13.");
+    }
+    std::error_code filesystem_error;
+    fs::create_directories(dest_folder, filesystem_error);
+    if (filesystem_error) {
+      return Result::Fail("The game folder could not be created.");
+    }
+    const fs::path target = dest_folder / "default.xex";
+    if (fs::exists(target, filesystem_error)) {
+      return Result::Ok();  // a game (or an earlier disc image's executable) is already there
+    }
+    const fs::path partial = dest_folder / "default.xex.partial";
+    {
+      std::ofstream output(partial, std::ios::binary | std::ios::trunc);
+      if (!output || !reader.CopyFile(*xex, output, [](uint64_t) { return true; }, &error)) {
+        output.close();
+        fs::remove(partial, filesystem_error);
+        return Result::Fail(error.empty() ? "The game executable could not be read from the disc image." : error);
+      }
+    }
+    fs::rename(partial, target, filesystem_error);
+    if (filesystem_error) {
+      return Result::Fail("The game executable could not be saved.");
+    }
+    return Result::Ok();
+  } catch (...) {
+    return Result::Fail("The disc image could not be read.");
+  }
+}
+
 Result ExtractDiscImage(const fs::path& iso, const fs::path& dest_folder,
                         const ProgressFn& progress, const CancelFlag& cancel) {
   fs::path partial;

@@ -908,6 +908,7 @@ void StartChooseGameFolder(AppState& app, const fs::path& folder) {
     const GameFilesStatus status = CheckGameFolder(folder, paths);
     Settings settings = current_settings;
     settings.game_folder = folder;
+    settings.disc_image.clear();  // a folder replaces a disc image
     const Result saved = SaveSettings(paths, settings);
     return JobOutcome{saved, [&app, status, settings] {
                         app.game_files = status;
@@ -1026,7 +1027,10 @@ void StartExtractDisc(AppState& app, fs::path image) {
     const Result result = ExtractDiscImage(image, destination, progress, cancel);
     const GameFilesStatus status = result.ok ? CheckGameFolder(destination, paths) : GameFilesStatus{};
     Settings settings = current_settings;
-    if (result.ok) settings.game_folder = destination;
+    if (result.ok) {
+      settings.game_folder = destination;
+      settings.disc_image.clear();
+    }
     const Result save = result.ok ? SaveSettings(paths, settings) : result;
     return JobOutcome{save, [&app, status, settings] {
                         app.game_files = status;
@@ -1437,6 +1441,68 @@ std::string AndroidDisplayName(const std::string& uri) {
   return result;
 }
 
+// Keeps read access to a picked document across app restarts (the game reads the .iso at every start).
+bool AndroidKeepUriAccess(const std::string& uri) {
+  JNIEnv* env = static_cast<JNIEnv*>(SDL_GetAndroidJNIEnv());
+  jobject activity = static_cast<jobject>(SDL_GetAndroidActivity());
+  if (!env || !activity) return false;
+  bool ok = false;
+  jclass uri_class = env->FindClass("android/net/Uri");
+  jmethodID parse = uri_class ? env->GetStaticMethodID(uri_class, "parse", "(Ljava/lang/String;)Landroid/net/Uri;") : nullptr;
+  jclass activity_class = env->GetObjectClass(activity);
+  jmethodID get_resolver =
+      activity_class ? env->GetMethodID(activity_class, "getContentResolver", "()Landroid/content/ContentResolver;")
+                     : nullptr;
+  if (parse && get_resolver) {
+    jstring text = env->NewStringUTF(uri.c_str());
+    jobject parsed = env->CallStaticObjectMethod(uri_class, parse, text);
+    jobject resolver = env->CallObjectMethod(activity, get_resolver);
+    if (parsed && resolver && !env->ExceptionCheck()) {
+      jclass resolver_class = env->GetObjectClass(resolver);
+      jmethodID take = env->GetMethodID(resolver_class, "takePersistableUriPermission", "(Landroid/net/Uri;I)V");
+      if (take) {
+        env->CallVoidMethod(resolver, take, parsed, jint(1));  // Intent.FLAG_GRANT_READ_URI_PERMISSION
+        ok = !env->ExceptionCheck();
+      }
+      env->DeleteLocalRef(resolver_class);
+    }
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    if (resolver) env->DeleteLocalRef(resolver);
+    if (parsed) env->DeleteLocalRef(parsed);
+    env->DeleteLocalRef(text);
+  }
+  if (env->ExceptionCheck()) env->ExceptionClear();
+  if (activity_class) env->DeleteLocalRef(activity_class);
+  if (uri_class) env->DeleteLocalRef(uri_class);
+  env->DeleteLocalRef(activity);
+  PerfLog("picker: keep access to %s: %s", uri.c_str(), ok ? "yes" : "no");
+  return ok;
+}
+
+// The picked .iso as a readable path (/proc/self/fd/N) without copying it. The descriptor stays open.
+bool OpenPickedDiscImage(const std::string& uri, fs::path* out, std::string* error) {
+  SDL_IOStream* io = SDL_IOFromFile(uri.c_str(), "rb");
+  if (!io) {
+    *error = std::string("The selected file could not be opened: ") + SDL_GetError();
+    return false;
+  }
+  FILE* fp = static_cast<FILE*>(
+      SDL_GetPointerProperty(SDL_GetIOProperties(io), SDL_PROP_IOSTREAM_STDIO_FILE_POINTER, nullptr));
+  const int fd = fp ? ::dup(fileno(fp)) : -1;
+  SDL_CloseIO(io);
+  if (fd >= 0) {
+    const std::string proc_path = "/proc/self/fd/" + std::to_string(fd);
+    std::ifstream probe(proc_path, std::ios::binary);
+    if (probe) {
+      *out = Utf8Path(proc_path);
+      return true;
+    }
+    ::close(fd);
+  }
+  *error = "This .iso can't be read where it is. Copy it to the phone's own storage (for example Download) and pick it there.";
+  return false;
+}
+
 // The Android picker returns content:// URIs. ISOs are read through a duplicated file descriptor; every other
 // file is copied under its real name so package import still sees the original file name.
 bool ResolvePickedUri(AppState& app, DialogKind kind, const std::string& selected, fs::path* out,
@@ -1670,7 +1736,10 @@ void StartSelectGameFolder(AppState& app) {
     }
     const GameFilesStatus status = result.ok ? CheckGameFolder(destination, paths) : GameFilesStatus{};
     Settings settings = current_settings;
-    if (result.ok) settings.game_folder = destination;
+    if (result.ok) {
+      settings.game_folder = destination;
+      settings.disc_image.clear();
+    }
     const Result save = result.ok ? SaveSettings(paths, settings) : result;
     return JobOutcome{save, [&app, status, settings] {
                         app.game_files = status;
@@ -1684,6 +1753,42 @@ void StartSelectGameFolder(AppState& app) {
   });
 }
 #endif
+
+void StartUseDiscImage(AppState& app, const std::string& source) {
+  fs::path image = Utf8Path(source);
+#ifdef __ANDROID__
+  if (source.rfind("content://", 0) == 0) {
+    std::string error;
+    AndroidKeepUriAccess(source);
+    if (!OpenPickedDiscImage(source, &image, &error)) {
+      SetBanner(app, error);
+      return;
+    }
+  }
+#endif
+  const Paths paths = app.paths;
+  const fs::path destination = paths.default_game_folder;
+  const Settings current_settings = app.settings;
+  BeginJob(app, "Checking the disc image…", [&app, paths, image, source, destination, current_settings](
+                                                     const ProgressFn&, CancelFlag&) {
+    const Result result = PrepareDiscImageFolder(image, destination);
+    const GameFilesStatus status = result.ok ? CheckGameFolder(destination, paths) : GameFilesStatus{};
+    Settings settings = current_settings;
+    if (result.ok) {
+      settings.game_folder = destination;
+      settings.disc_image = source;
+    }
+    const Result save = result.ok ? SaveSettings(paths, settings) : result;
+    return JobOutcome{save, [&app, status, settings] {
+                        app.game_files = status;
+                        app.settings = settings;
+                        SetBanner(app,
+                                  status.ready() ? "Disc image ready: the game plays straight from the .iso."
+                                                 : "Disc image ready. Now add Title Update 2.0.1.0 (Options > Add TU / DLC).",
+                                  true);
+                      }};
+  });
+}
 
 void ConsumeDialog(AppState& app) {
   DialogKind kind = DialogKind::None;
@@ -1704,6 +1809,11 @@ void ConsumeDialog(AppState& app) {
     return;
   }
   if (selections.empty()) return;
+  if (kind == DialogKind::DiscImage) {
+    // Played straight from the .iso: nothing is copied or unpacked (this also avoids copying a whole disc).
+    StartUseDiscImage(app, selections.front());
+    return;
+  }
   std::vector<fs::path> paths;
   paths.reserve(selections.size());
 #ifdef __ANDROID__
@@ -2451,7 +2561,9 @@ void DrawSettings(AppState& app) {
     const bool sync_to_display = app.settings.sync_to_display;
     const bool check_updates = app.settings.check_updates;
     const std::string skipped_update_version = app.settings.skipped_update_version;
+    const std::string disc_image = app.settings.disc_image;
     app.settings = app.recommendation.settings;
+    app.settings.disc_image = disc_image;
     app.settings.gpu_id = selected_gpu_id;
     app.settings.game_folder = game_folder;
     app.settings.auto_start = auto_start;
@@ -4586,8 +4698,9 @@ void DrawGuide(AppState& app) {
        "The game needs several GB, and the same again free while it is copied into the app.", 130.0f);
   step("guide-3", "3. SELECT FOLDER OR IMPORT ISO",
        "On the home screen tap Select Folder and choose that folder. The launcher copies the game into the app "
-       "and checks it. Or tap Import ISO and pick your .iso: the game is unpacked into the app (about 8 GB free "
-       "space needed; the .iso can be deleted afterwards). When it says GAME FILES READY, tap Play.", 150.0f);
+       "and checks it. Or tap Import ISO and pick your .iso: the game plays straight from it, nothing is unpacked "
+       "(keep the .iso on the phone). Then add Title Update 2.0.1.0 with Options > Add TU / DLC. When it says "
+       "GAME FILES READY, tap Play.", 150.0f);
   step("guide-4", "BEST PERFORMANCE",
        "Settings > Arena Crowd: Half or Off gives the steadiest frame rate. Anti-aliasing: Faster and "
        "Resolution: 480p lower the work further. Frame Rate: 30 Locked keeps the pace even.", 130.0f);

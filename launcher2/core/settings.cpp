@@ -221,7 +221,7 @@ std::string BuildIni(const Paths& paths, const Settings& settings) {
                                           "auto_backup", "stretch_to_fill", "sync_to_display",
                                           "check_updates", "skipped_update_version", "touch_controls", "arena_crowd",
                                           "gpu_profile", "vsync", "fast_cpu_cores", "touch_size",
-                                          "touch_opacity", "extra_arguments"};
+                                          "touch_opacity", "extra_arguments", "disc_image"};
   std::vector<std::string> unknown_settings;
   std::vector<std::string> outside_settings;
   std::string active_section;
@@ -275,6 +275,7 @@ std::string BuildIni(const Paths& paths, const Settings& settings) {
          << "\r\ntouch_size=" << settings.touch_size
          << "\r\ntouch_opacity=" << settings.touch_opacity
          << "\r\nextra_arguments=" << settings.extra_arguments
+         << "\r\ndisc_image=" << settings.disc_image
          << "\r\nskipped_update_version=" << settings.skipped_update_version << "\r\n";
   for (const auto& line : unknown_settings) output << line << "\r\n";
   if (!outside_settings.empty()) {
@@ -399,6 +400,7 @@ Settings LoadSettingsImpl(const Paths& paths) {
   settings.touch_size = percent("touch_size", 100, 60, 150);
   settings.touch_opacity = percent("touch_opacity", 46, 15, 100);
   settings.extra_arguments = Trim(IniValue(entries, "extra_arguments"));
+  settings.disc_image = Trim(IniValue(entries, "disc_image"));
   settings.skipped_update_version = Trim(IniValue(entries, "skipped_update_version"));
   settings.explicit_choice = resolution_explicit || frame_explicit;
   return settings;
