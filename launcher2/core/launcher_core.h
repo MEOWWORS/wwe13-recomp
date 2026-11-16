@@ -51,6 +51,7 @@ enum class FrameRate { kClassic, kKeep60, kLock30 };
 enum class AntiAliasing { kOriginal4x, kFaster2x };
 enum class DisplayMode { kFullscreen, kWindowed };
 enum class TouchControls { kAndroid, kXbox360, kNone };
+enum class ArenaCrowd { kFull, kHalf, kOff };
 
 struct Settings {
   Resolution resolution = Resolution::k720p;
@@ -58,6 +59,7 @@ struct Settings {
   AntiAliasing anti_aliasing = AntiAliasing::kOriginal4x;
   DisplayMode display = DisplayMode::kFullscreen;
   TouchControls touch_controls = TouchControls::kAndroid;  // on-screen buttons (Android builds)
+  ArenaCrowd arena_crowd = ArenaCrowd::kFull;  // people in the arena seats (fewer = less GPU work)
   std::string gpu_id;    // stable id of the chosen Vulkan device ("" = recommended)
   fs::path game_folder;  // folder holding default.xex + default.xexp
   bool auto_start = false;          // "Start straight away next time" (hold Shift at start to come back)

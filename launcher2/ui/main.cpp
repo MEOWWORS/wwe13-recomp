@@ -2549,6 +2549,31 @@ void DrawSettings(AppState& app) {
   }
 
   ImGui::Spacing();
+  if (BeginPanel(app, "settings-crowd", ImVec2(0.0f, S(app, compact ? 154.0f : 178.0f)))) {
+    DrawPanelHeading(app, "ARENA CROWD", "Fewer people in the seats means less work for the graphics chip.");
+    ImGui::Spacing();
+    const float crowd_width = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x * 2.0f) / 3.0f;
+    const ArenaCrowd crowd = app.settings.arena_crowd;
+    DrawSegment(app, "Full", crowd == ArenaCrowd::kFull, crowd_width, [&app] {
+      app.settings.arena_crowd = ArenaCrowd::kFull;
+      SaveSettings(app);
+    });
+    ImGui::SameLine();
+    DrawSegment(app, "Half", crowd == ArenaCrowd::kHalf, crowd_width, [&app] {
+      app.settings.arena_crowd = ArenaCrowd::kHalf;
+      SaveSettings(app);
+    });
+    ImGui::SameLine();
+    DrawSegment(app, "Off", crowd == ArenaCrowd::kOff, crowd_width, [&app] {
+      app.settings.arena_crowd = ArenaCrowd::kOff;
+      SaveSettings(app);
+    });
+    DrawTextDisabled(app, crowd == ArenaCrowd::kFull ? "Every seat filled, as on the Xbox 360"
+                          : crowd == ArenaCrowd::kHalf ? "About half the people" : "Empty seats: the fastest");
+  }
+  EndPanel();
+
+  ImGui::Spacing();
   ImGui::PushStyleColor(ImGuiCol_ChildBg, kRaised);
   ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, S(app, 10.0f));
   ImGui::BeginChild("settings-gpu-row", ImVec2(0, S(app, compact ? 64.0f : 80.0f)), false,

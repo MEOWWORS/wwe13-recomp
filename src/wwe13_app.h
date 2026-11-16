@@ -34,6 +34,7 @@
 #include "thread_profiler.h"
 #include "game_version_check.h"
 #include "release_diagnostics.h"
+#include "arena_crowd.h"
 #include "scene_aa.h"
 #include "scene_resolution.h"
 #include "shader_cache_seed.h"
@@ -111,6 +112,7 @@ class Wwe13App : public rex::ReXApp {
     wwe13::InitializeSceneResolutionOption();
     wwe13::InitializeEdramTilesForSceneResolution();
     wwe13::InitializeSceneAaOption();
+    wwe13::InitializeArenaCrowd(user_data_root_ / "crowd_cache");
     wwe13::SeedShaderCache(user_data_root_);
     if (game_file_check_result_ == wwe13::GameFileCheckResult::kSupported) {
       REXLOG_INFO("[wwe13] validated title ID 545108B4 and title update 2.0.1.0");

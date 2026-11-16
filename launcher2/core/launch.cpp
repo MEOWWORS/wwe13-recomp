@@ -291,6 +291,8 @@ LaunchPlan BuildLaunchPlan(const Paths& paths, const Settings& settings,
       {"WWE13_HOST_VSYNC", effective.sync_to_display ? "1" : "0"},
       {"WWE13_INTERNAL_RES", resolution.internal ? resolution.internal : ""},
       {"WWE13_SCENE_AA", effective.anti_aliasing == AntiAliasing::kFaster2x ? "2x" : ""},
+      {"WWE13_ARENA_CROWD", effective.arena_crowd == ArenaCrowd::kOff ? "off"
+                            : effective.arena_crowd == ArenaCrowd::kHalf ? "half" : "full"},
       {"WWE13_TOUCH_STYLE", effective.touch_controls == TouchControls::kXbox360 ? "xbox"
                             : effective.touch_controls == TouchControls::kNone ? "none" : "android"}};
 #ifndef _WIN32

@@ -76,7 +76,9 @@ set(WWE13_SOURCES
   src/text_entry_keyboard.cpp
   src/scene_aa.cpp
   src/xmp_audio_probe.cpp
-  src/shader_cache_seed.cpp)
+  src/shader_cache_seed.cpp
+  src/arena_crowd.cpp
+  src/svrfmt/pac.cpp)
 
 if(ANDROID)
   list(APPEND WWE13_SOURCES src/virtual_gamepad.cpp)
