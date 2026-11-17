@@ -159,7 +159,7 @@ VirtualGamepadInputDriver::~VirtualGamepadInputDriver() {
 }
 
 // The 2K14 SDK asks each driver for its devices: the touch controls are one pad.
-constexpr rex::input::DeviceId kTouchPad{1};
+constexpr rex::input::DeviceId kTouchPad{0x544F5543};  // 'TOUC'
 
 void VirtualGamepadInputDriver::EnumerateDevices(std::vector<rex::input::DeviceInfo>& out) {
   rex::input::DeviceInfo info;

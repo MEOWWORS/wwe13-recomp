@@ -41,6 +41,8 @@
 #include "shader_cache_seed.h"
 #if defined(__ANDROID__)
 #include "virtual_gamepad.h"
+#include <dlfcn.h>
+#include <rex/system/gpu_plugin.h>
 #endif
 
 namespace wwe13 {
@@ -86,6 +88,20 @@ class Wwe13App : public rex::ReXApp {
       }
       return input;
     };
+    if (!config.graphics) {
+      namespace sys = rex::system;
+      void* plugin = dlopen("librexgpu-xenos.so", RTLD_NOW);
+      auto abi = plugin ? reinterpret_cast<sys::GpuAbiVersionFn>(dlsym(plugin, sys::kGpuAbiVersionSymbol)) : nullptr;
+      auto create = plugin ? reinterpret_cast<sys::GpuCreateFn>(dlsym(plugin, sys::kGpuCreateSymbol)) : nullptr;
+      if (abi && create && abi() == sys::kGpuPluginAbiVersion) {
+        sys::GpuCreateInfo info{};
+        info.struct_size = sizeof(info);
+        info.backend = "vulkan";
+        config.graphics.reset(create(sys::kGpuPluginAbiVersion, &info));
+      }
+      REXLOG_INFO("[wwe13] GPU plugin librexgpu-xenos.so: {}", config.graphics ? "loaded"
+                  : plugin ? "loaded, but it made no graphics system" : dlerror());
+    }
 #endif
     // GitHub #6: a second start-up against the same user-data folder becomes a second game
     // process fighting over the GPU (players hit this by clicking Play again while the first,

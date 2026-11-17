@@ -6,6 +6,6 @@ game_root = "game"
 [entrypoint]
 file_path = "game/default.xex"
 out_directory_path = "generated/default"
-includes = ["config/functions.toml", "config/hooks.toml"]
+includes = ["config/functions.toml", "config/hooks.toml", "config/switch_tables.toml"]
 
 [entrypoint.functions]
