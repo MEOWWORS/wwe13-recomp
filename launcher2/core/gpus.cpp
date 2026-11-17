@@ -99,7 +99,7 @@ Recommendation RecommendedSettings(const std::vector<GpuInfo>& gpus) {
   Recommendation recommendation;
   recommendation.settings.resolution = Resolution::k720p;
   recommendation.settings.frame_rate = FrameRate::kClassic;
-  recommendation.settings.anti_aliasing = AntiAliasing::kOriginal4x;
+  recommendation.settings.anti_aliasing = AntiAliasing::kFaster2x;  // measured faster on phones
   recommendation.settings.explicit_choice = false;
   const auto discrete = std::find_if(gpus.begin(), gpus.end(), [](const GpuInfo& gpu) {
     return !gpu.integrated;

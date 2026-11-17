@@ -291,13 +291,19 @@ LaunchPlan BuildLaunchPlan(const Paths& paths, const Settings& settings,
   }
 #endif
   if (!effective.disc_image.empty()) plan.arguments.push_back("--game_disc_image=" + effective.disc_image);
-  // Extra arguments typed in Settings: each "--name=value" word is passed on as it is.
+  // Extra arguments typed in Settings: each "--name=value" word is passed on as it is; each
+  // "WWE13_NAME=value" word sets that test switch for the game.
+  std::vector<std::pair<std::string, std::string>> extra_environment;
   {
     std::string word;
     const std::string text = effective.extra_arguments + " ";
     for (const char c : text) {
       if (c == ' ' || c == '\t') {
-        if (word.size() > 2 && word.rfind("--", 0) == 0) plan.arguments.push_back(word);
+        if (word.size() > 2 && word.rfind("--", 0) == 0) {
+          plan.arguments.push_back(word);
+        } else if (word.rfind("WWE13_", 0) == 0 && word.find('=') != std::string::npos) {
+          extra_environment.emplace_back(word.substr(0, word.find('=')), word.substr(word.find('=') + 1));
+        }
         word.clear();
       } else {
         word.push_back(c);
@@ -330,6 +336,15 @@ LaunchPlan BuildLaunchPlan(const Paths& paths, const Settings& settings,
       {"WWE13_TOUCH_ALPHA", std::to_string(effective.touch_opacity)},
       {"WWE13_TOUCH_STYLE", effective.touch_controls == TouchControls::kXbox360 ? "xbox"
                             : effective.touch_controls == TouchControls::kNone ? "none" : "android"}};
+  for (const auto& [name, value] : extra_environment) {
+    auto it = std::find_if(plan.environment.begin(), plan.environment.end(),
+                           [&name](const auto& entry) { return entry.first == name; });
+    if (it != plan.environment.end()) {
+      it->second = value;
+    } else {
+      plan.environment.emplace_back(name, value);
+    }
+  }
 #ifndef _WIN32
   // RenderDoc's implicit Vulkan layer draws a capture banner over the game. Disable only that layer
   // for the game process; keep other loader filters already chosen by the user (for example, Steam
